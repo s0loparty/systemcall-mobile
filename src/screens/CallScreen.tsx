@@ -6,25 +6,22 @@ import {
   LiveKitRoom,
   useLocalParticipant,
 } from '@livekit/react-native';
-import {usePipModeListener} from '@videosdk.live/react-native-pip-android';
 import {ParticipantGrid} from '../components/call/ParticipantGrid';
 import {MediaToggle} from '../components/call/MediaToggle';
 import {PrimaryButton} from '../components/PrimaryButton';
-import {backgroundCall} from '../native/backgroundCall';
-import {pip} from '../native/pip';
 import type {RootStackParamList} from '../navigation/types';
+
 type Props = NativeStackScreenProps<RootStackParamList, 'Call'>;
+
 export function CallScreen({route, navigation}: Props) {
   useEffect(() => {
     void AudioSession.startAudioSession();
-    void backgroundCall.start();
-    pip.setCallScreenActive(true);
+
     return () => {
-      pip.setCallScreenActive(false);
-      void backgroundCall.stop();
       void AudioSession.stopAudioSession();
     };
   }, []);
+
   return (
     <LiveKitRoom
       serverUrl={route.params.livekit.url}
@@ -40,22 +37,19 @@ export function CallScreen({route, navigation}: Props) {
     </LiveKitRoom>
   );
 }
+
 function Content({roomName, onLeave}: {roomName: string; onLeave: () => void}) {
-  const inPip = usePipModeListener();
   const {localParticipant, isMicrophoneEnabled, isCameraEnabled} =
     useLocalParticipant();
+
   const mic = useCallback(() => {
     void localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled);
   }, [localParticipant, isMicrophoneEnabled]);
+
   const cam = useCallback(() => {
     void localParticipant.setCameraEnabled(!isCameraEnabled);
   }, [localParticipant, isCameraEnabled]);
-  if (inPip)
-    return (
-      <View style={s.pip}>
-        <ParticipantGrid />
-      </View>
-    );
+
   return (
     <SafeAreaView style={s.safe}>
       <View style={s.container}>
@@ -79,6 +73,7 @@ function Content({roomName, onLeave}: {roomName: string; onLeave: () => void}) {
     </SafeAreaView>
   );
 }
+
 const s = StyleSheet.create({
   safe: {flex: 1, backgroundColor: '#090909'},
   container: {flex: 1, padding: 14, gap: 14},
@@ -86,5 +81,4 @@ const s = StyleSheet.create({
   status: {color: '#7f7f7f'},
   grid: {flex: 1},
   controls: {flexDirection: 'row', justifyContent: 'center', gap: 8},
-  pip: {flex: 1, backgroundColor: '#000'},
 });
