@@ -5,11 +5,11 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import type {NativeStackScreenProps} from '@react-navigation/native-stack';
+import {FloatingLabelInput} from '../components/FloatingLabelInput';
 import {PrimaryButton} from '../components/PrimaryButton';
 import {getRoom} from '../api/rooms';
 import {parseRoomPublicId} from '../utils/roomLink';
@@ -64,22 +64,21 @@ export function HomeScreen({navigation}: Props) {
           </View>
 
           <View style={s.form}>
-            <TextInput
+            <FloatingLabelInput
+              label="Ссылка на комнату"
               value={link}
               onChangeText={setLink}
               autoCapitalize="none"
               autoCorrect={false}
               keyboardType="url"
-              placeholder="https://.../rooms/abc123"
-              placeholderTextColor="#666"
-              style={s.input}
+              autoComplete="off"
+              onClear={() => {
+                setLink('');
+                setError(null);
+              }}
             />
             {error ? <Text style={s.error}>{error}</Text> : null}
-            <PrimaryButton
-              label="Продолжить"
-              loading={loading}
-              onPress={go}
-            />
+            <PrimaryButton label="Продолжить" loading={loading} onPress={go} />
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -105,13 +104,5 @@ const s = StyleSheet.create({
   title: {color: '#fff', fontSize: 36, fontWeight: '800'},
   desc: {color: '#989898', fontSize: 16, lineHeight: 23, marginTop: 12},
   form: {gap: 12},
-  input: {
-    minHeight: 58,
-    borderRadius: 16,
-    backgroundColor: '#171717',
-    color: '#fff',
-    fontSize: 16,
-    paddingHorizontal: 16,
-  },
   error: {color: '#ff7373'},
 });

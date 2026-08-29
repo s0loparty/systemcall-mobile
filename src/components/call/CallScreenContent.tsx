@@ -3,6 +3,12 @@ import {StyleSheet, Text, View} from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import {usePipModeListener} from '@videosdk.live/react-native-pip-android';
 import {
+  ArrowsRightLeftIcon,
+  MicrophoneIcon,
+  VideoCameraIcon,
+  VideoCameraSlashIcon,
+} from 'react-native-heroicons/outline';
+import {
   isTrackReference,
   useLocalParticipant,
   useTracks,
@@ -83,6 +89,7 @@ export function CallScreenContent({
                 ? desiredMicrophoneEnabled
                 : isMicrophoneEnabled
             }
+            icon={<MicrophoneIcon size={18} color="#fff" />}
             onPress={() => void onMicrophoneChange(!desiredMicrophoneEnabled)}
           />
           <MediaToggle
@@ -90,11 +97,19 @@ export function CallScreenContent({
             active={
               mediaIsSynchronizing ? desiredCameraEnabled : isCameraEnabled
             }
+            icon={
+              desiredCameraEnabled ? (
+                <VideoCameraIcon size={18} color="#fff" />
+              ) : (
+                <VideoCameraSlashIcon size={18} color="#fff" />
+              )
+            }
             onPress={() => void onCameraChange(!desiredCameraEnabled)}
           />
           <MediaToggle
-            label={cameraFacingMode === 'user' ? 'Фронтальная' : 'Основная'}
+            label={cameraFacingMode === 'user' ? 'Фронт' : 'Основа'}
             active={desiredCameraEnabled}
+            icon={<ArrowsRightLeftIcon size={18} color="#fff" />}
             onPress={() => void onSwitchCamera()}
           />
         </View>

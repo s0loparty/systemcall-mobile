@@ -1,16 +1,26 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {
+  KeyboardAvoidingView,
   PermissionsAndroid,
   Platform,
+  Pressable,
+  ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import type {NativeStackScreenProps} from '@react-navigation/native-stack';
+import {
+  ArrowsRightLeftIcon,
+  ArrowLeftIcon,
+  MicrophoneIcon,
+  VideoCameraIcon,
+  VideoCameraSlashIcon,
+} from 'react-native-heroicons/outline';
 import {createLocalVideoTrack} from 'livekit-client';
 import type {LocalVideoTrack} from 'livekit-client';
+import {FloatingLabelInput} from '../components/FloatingLabelInput';
 import {MediaToggle} from '../components/call/MediaToggle';
 import {LocalPreview} from '../components/call/LocalPreview';
 import {PrimaryButton} from '../components/PrimaryButton';
@@ -18,6 +28,8 @@ import {joinRoom} from '../api/rooms';
 import type {RootStackParamList} from '../navigation/types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'PreJoin'>;
+type AndroidPermission =
+  (typeof PermissionsAndroid.PERMISSIONS)[keyof typeof PermissionsAndroid.PERMISSIONS];
 
 export function PreJoinScreen({route, navigation}: Props) {
   const [camera, setCamera] = useState(true);
@@ -29,17 +41,18 @@ export function PreJoinScreen({route, navigation}: Props) {
   const [previewTrack, setPreviewTrack] = useState<LocalVideoTrack | null>(null);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const previewTrackRef = useRef<LocalVideoTrack | null>(null);
-  type AndroidPermission =
-    (typeof PermissionsAndroid.PERMISSIONS)[keyof typeof PermissionsAndroid.PERMISSIONS];
 
-  const requestAndroidPermission = useCallback(async (permission: AndroidPermission) => {
-    if (Platform.OS !== 'android') {
-      return true;
-    }
+  const requestAndroidPermission = useCallback(
+    async (permission: AndroidPermission) => {
+      if (Platform.OS !== 'android') {
+        return true;
+      }
 
-    const granted = await PermissionsAndroid.request(permission);
-    return granted === PermissionsAndroid.RESULTS.GRANTED;
-  }, []);
+      const granted = await PermissionsAndroid.request(permission);
+      return granted === PermissionsAndroid.RESULTS.GRANTED;
+    },
+    [],
+  );
 
   const ensureCameraPermission = useCallback(async () => {
     const granted = await requestAndroidPermission(
@@ -188,74 +201,126 @@ export function PreJoinScreen({route, navigation}: Props) {
 
   return (
     <SafeAreaView style={s.safe} edges={['top', 'bottom', 'left', 'right']}>
-      <View style={s.container}>
-        <View>
-          <Text style={s.title}>{route.params.roomName}</Text>
-          <Text style={s.sub}>
-            {route.params.waitingRoomEnabled
-              ? 'После входа организатор должен будет вас допустить'
-              : 'Проверьте камеру и микрофон'}
-          </Text>
-        </View>
-        <View style={s.preview}>
-          <LocalPreview track={previewTrack} enabled={camera} />
-        </View>
-        <TextInput
-          value={name}
-          onChangeText={setName}
-          placeholder="Ваше имя"
-          placeholderTextColor="#666"
-          style={s.input}
-        />
-        {route.params.hasPassword ? (
-          <TextInput
-            value={password}
-            onChangeText={setPassword}
-            placeholder="Пароль комнаты"
-            placeholderTextColor="#666"
-            secureTextEntry
-            autoCapitalize="none"
-            autoCorrect={false}
-            style={s.input}
-          />
-        ) : null}
-        {error ? <Text style={s.error}>{error}</Text> : null}
-        <View style={s.controls}>
-          <MediaToggle
-            label="Микрофон"
-            active={mic}
-            onPress={() => void toggleMicrophone()}
-          />
-          <MediaToggle label="Камера" active={camera} onPress={toggleCamera} />
-          <MediaToggle
-            label={facingMode === 'user' ? 'Фронтальная' : 'Основная'}
-            active={camera}
-            onPress={() => void switchCamera()}
-          />
-        </View>
-        <PrimaryButton
-          label={route.params.waitingRoomEnabled ? 'Запросить вход' : 'Войти в звонок'}
-          loading={loading}
-          onPress={join}
-        />
-      </View>
+      <KeyboardAvoidingView
+        style={s.safe}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <ScrollView
+          contentContainerStyle={s.container}
+          keyboardShouldPersistTaps="handled"
+          bounces={false}>
+          <View style={s.header}>
+            <Pressable
+              hitSlop={10}
+              onPress={() => navigation.popToTop()}
+              style={s.backButton}>
+              <ArrowLeftIcon size={18} color="#fff" />
+              <Text style={s.backLabel}>Назад</Text>
+            </Pressable>
+            <View>
+              <Text style={s.title}>{route.params.roomName}</Text>
+              <Text style={s.sub}>
+                {route.params.waitingRoomEnabled
+                  ? 'После входа организатор должен будет вас допустить'
+                  : 'Проверьте камеру и микрофон'}
+              </Text>
+            </View>
+          </View>
+
+          <View style={s.preview}>
+            <LocalPreview track={previewTrack} enabled={camera} />
+          </View>
+
+          <View style={s.form}>
+            <FloatingLabelInput
+              label="Ваше имя"
+              value={name}
+              onChangeText={setName}
+              autoCorrect={false}
+            />
+            {route.params.hasPassword ? (
+              <FloatingLabelInput
+                label="Пароль"
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            ) : null}
+            {error ? <Text style={s.error}>{error}</Text> : null}
+            <View style={s.controls}>
+              <MediaToggle
+                label="Микрофон"
+                active={mic}
+                icon={<MicrophoneIcon size={18} color="#fff" />}
+                onPress={() => void toggleMicrophone()}
+              />
+              <MediaToggle
+                label="Камера"
+                active={camera}
+                icon={
+                  camera ? (
+                    <VideoCameraIcon size={18} color="#fff" />
+                  ) : (
+                    <VideoCameraSlashIcon size={18} color="#fff" />
+                  )
+                }
+                onPress={toggleCamera}
+              />
+              <MediaToggle
+                label={facingMode === 'user' ? 'Фронт' : 'Основа'}
+                active={camera}
+                icon={<ArrowsRightLeftIcon size={18} color="#fff" />}
+                onPress={() => void switchCamera()}
+              />
+            </View>
+            <PrimaryButton
+              label={
+                route.params.waitingRoomEnabled
+                  ? 'Запросить вход'
+                  : 'Войти в звонок'
+              }
+              loading={loading}
+              onPress={join}
+            />
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
 const s = StyleSheet.create({
   safe: {flex: 1, backgroundColor: '#0b0b0b'},
-  container: {flex: 1, gap: 16, padding: 16},
+  container: {
+    flexGrow: 1,
+    gap: 16,
+    padding: 16,
+  },
+  header: {
+    gap: 14,
+  },
+  backButton: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 4,
+  },
+  backLabel: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
   title: {color: '#fff', fontSize: 22, fontWeight: '800'},
   sub: {color: '#8b8b8b'},
-  preview: {flex: 1},
-  input: {
-    minHeight: 52,
-    borderRadius: 16,
-    backgroundColor: '#171717',
-    color: '#fff',
-    paddingHorizontal: 16,
-    fontSize: 16,
+  preview: {
+    flex: 1,
+    minHeight: 260,
+  },
+  form: {
+    gap: 12,
+    paddingBottom: 8,
   },
   error: {color: '#ff7373'},
   controls: {flexDirection: 'row', justifyContent: 'center', gap: 8},

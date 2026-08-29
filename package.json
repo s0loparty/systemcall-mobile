@@ -20,8 +20,10 @@
     "livekit-client": "2.22.1",
     "react": "19.1.0",
     "react-native": "0.81.1",
+    "react-native-heroicons": "^4.0.0",
     "react-native-safe-area-context": "5.8.0",
-    "react-native-screens": "4.24.0"
+    "react-native-screens": "4.24.0",
+    "react-native-svg": "^15.15.5"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
