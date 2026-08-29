@@ -8,11 +8,11 @@ import React, {
 import {
   AppState,
   type AppStateStatus,
-  SafeAreaView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import {SafeAreaView} from 'react-native-safe-area-context';
 import type {NativeStackScreenProps} from '@react-navigation/native-stack';
 import {
   AudioSession,
@@ -183,9 +183,6 @@ export function CallScreen({route, navigation}: Props) {
   useEffect(() => {
     void AudioSession.startAudioSession();
 
-    // Start while the Activity is visible. Android 14+ does not allow a
-    // camera/microphone foreground service to be created after the app is
-    // already in the background.
     void backgroundCall.start().catch(error => {
       console.warn('Background call service start failed', error);
     });
@@ -337,7 +334,7 @@ function Content({
     status === 'Подключение…' || status === 'Переподключение…';
 
   return (
-    <SafeAreaView style={s.safe}>
+    <SafeAreaView style={s.safe} edges={['top', 'bottom', 'left', 'right']}>
       <View style={s.container}>
         <View>
           <Text style={s.title}>{roomName}</Text>
