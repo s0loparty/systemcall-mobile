@@ -1,15 +1,19 @@
 import React, {useState} from 'react';
-import {SafeAreaView, StyleSheet, Text, TextInput, View} from 'react-native';
+import {StyleSheet, Text, TextInput, View} from 'react-native';
+import {SafeAreaView} from 'react-native-safe-area-context';
 import type {NativeStackScreenProps} from '@react-navigation/native-stack';
 import {PrimaryButton} from '../components/PrimaryButton';
 import {getRoom} from '../api/rooms';
 import {parseRoomPublicId} from '../utils/roomLink';
 import type {RootStackParamList} from '../navigation/types';
+
 type Props = NativeStackScreenProps<RootStackParamList, 'Home'>;
+
 export function HomeScreen({navigation}: Props) {
   const [link, setLink] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
   async function go() {
     setError(null);
     const id = parseRoomPublicId(link);
@@ -31,8 +35,9 @@ export function HomeScreen({navigation}: Props) {
       setLoading(false);
     }
   }
+
   return (
-    <SafeAreaView style={s.safe}>
+    <SafeAreaView style={s.safe} edges={['top', 'bottom', 'left', 'right']}>
       <View style={s.container}>
         <View>
           <Text style={s.eyebrow}>SYSTEMCALL</Text>
@@ -59,6 +64,7 @@ export function HomeScreen({navigation}: Props) {
     </SafeAreaView>
   );
 }
+
 const s = StyleSheet.create({
   safe: {flex: 1, backgroundColor: '#0b0b0b'},
   container: {
