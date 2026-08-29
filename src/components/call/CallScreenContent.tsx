@@ -1,6 +1,7 @@
 import React from 'react';
 import {StyleSheet, Text, View} from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
+import {usePipModeListener} from '@videosdk.live/react-native-pip-android';
 import {
   isTrackReference,
   useLocalParticipant,
@@ -36,6 +37,7 @@ export function CallScreenContent({
   onSwitchCamera,
   onLeave,
 }: Props) {
+  const isInPipMode = Boolean(usePipModeListener());
   const {isMicrophoneEnabled, isCameraEnabled} = useLocalParticipant();
   const localTracks = useTracks(
     [{source: Track.Source.Camera, withPlaceholder: true}],
@@ -46,6 +48,22 @@ export function CallScreenContent({
   const mediaIsSynchronizing =
     status === 'Подключение…' || status === 'Переподключение…';
 
+  const localPreview = (
+    <View style={isInPipMode ? s.pipPreview : s.selfView}>
+      {desiredCameraEnabled && localCamera && isTrackReference(localCamera) ? (
+        <VideoTrack trackRef={localCamera} style={s.selfVideo} />
+      ) : (
+        <View style={s.selfPlaceholder}>
+          <Text style={s.selfText}>Вы</Text>
+        </View>
+      )}
+    </View>
+  );
+
+  if (isInPipMode) {
+    return <View style={s.pipContainer}>{localPreview}</View>;
+  }
+
   return (
     <SafeAreaView style={s.safe} edges={['top', 'bottom', 'left', 'right']}>
       <View style={s.container}>
@@ -55,15 +73,7 @@ export function CallScreenContent({
         </View>
         <View style={s.grid}>
           <ParticipantGrid />
-          <View style={s.selfView}>
-            {desiredCameraEnabled && localCamera && isTrackReference(localCamera) ? (
-              <VideoTrack trackRef={localCamera} style={s.selfVideo} />
-            ) : (
-              <View style={s.selfPlaceholder}>
-                <Text style={s.selfText}>Вы</Text>
-              </View>
-            )}
-          </View>
+          {localPreview}
         </View>
         <View style={s.controls}>
           <MediaToggle
@@ -97,6 +107,12 @@ export function CallScreenContent({
 const s = StyleSheet.create({
   safe: {flex: 1, backgroundColor: '#090909'},
   container: {flex: 1, padding: 14, gap: 14},
+  pipContainer: {flex: 1, backgroundColor: '#090909'},
+  pipPreview: {
+    flex: 1,
+    overflow: 'hidden',
+    backgroundColor: '#171717',
+  },
   title: {color: '#fff', fontSize: 20, fontWeight: '800'},
   status: {color: '#7f7f7f'},
   grid: {flex: 1, position: 'relative'},
