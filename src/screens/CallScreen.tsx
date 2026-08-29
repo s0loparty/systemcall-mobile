@@ -67,59 +67,54 @@ export function CallScreen({route, navigation}: Props) {
   const reconnecting = useRef(false);
   const restoringMedia = useRef(false);
 
-  const applyCameraFacingMode = useCallback(async () => {
+  const getCameraTrack = useCallback(() => {
     const publication = room.localParticipant.getTrackPublication(
       Track.Source.Camera,
     );
-    const track = publication?.track as LocalVideoTrack | undefined;
+    return publication?.track as LocalVideoTrack | undefined;
+  }, [room]);
+
+  const applyCameraFacingMode = useCallback(async () => {
+    const track = getCameraTrack();
     if (track) {
       await track.restartTrack({facingMode: cameraFacingModeRef.current});
     }
-  }, [room]);
+  }, [getCameraTrack]);
 
   const restoreCamera = useCallback(
-    async (forceRecreate = false) => {
+    async (forceRestart = false) => {
       if (!desiredCameraRef.current) {
         await room.localParticipant.setCameraEnabled(false);
         return;
       }
 
-      // Android may keep a publication object after returning from background
-      // while its native camera capturer is already stale. In that case checking
-      // publication.track is not enough. Recreate the camera capture explicitly.
-      if (forceRecreate) {
-        await room.localParticipant.setCameraEnabled(false);
-        await wait(180);
-        await room.localParticipant.setCameraEnabled(true);
-        await wait(350);
-        await applyCameraFacingMode();
+      const existingTrack = getCameraTrack();
+
+      // On Android the publication can survive backgrounding while its native
+      // capturer becomes stale. Restart the existing track in-place instead of
+      // toggling camera OFF first: turning it off during reconnect can leave
+      // LiveKit with no working camera until the user manually toggles it again.
+      if (forceRestart && existingTrack) {
+        await existingTrack.restartTrack({
+          facingMode: cameraFacingModeRef.current,
+        });
+        await wait(300);
         return;
       }
 
       await room.localParticipant.setCameraEnabled(true);
-      await wait(250);
+      await wait(300);
 
-      let publication = room.localParticipant.getTrackPublication(
-        Track.Source.Camera,
-      );
-
-      if (!publication?.track) {
-        await room.localParticipant.setCameraEnabled(false);
-        await wait(100);
-        await room.localParticipant.setCameraEnabled(true);
-        await wait(250);
-        publication = room.localParticipant.getTrackPublication(Track.Source.Camera);
-      }
-
-      if (publication?.track) {
-        await applyCameraFacingMode();
+      const track = getCameraTrack();
+      if (track) {
+        await track.restartTrack({facingMode: cameraFacingModeRef.current});
       }
     },
-    [applyCameraFacingMode, room],
+    [getCameraTrack, room],
   );
 
   const restoreLocalMedia = useCallback(
-    async (forceCameraRecreate = false) => {
+    async (forceCameraRestart = false) => {
       if (restoringMedia.current || room.state !== ConnectionState.Connected) {
         return;
       }
@@ -129,7 +124,7 @@ export function CallScreen({route, navigation}: Props) {
         await room.localParticipant.setMicrophoneEnabled(
           desiredMicrophoneRef.current,
         );
-        await restoreCamera(forceCameraRecreate);
+        await restoreCamera(forceCameraRestart);
       } catch (error) {
         console.warn('LiveKit local media restore failed', error);
       } finally {
@@ -144,15 +139,23 @@ export function CallScreen({route, navigation}: Props) {
       return;
     }
 
+    if (
+      room.state === ConnectionState.Reconnecting ||
+      room.state === ConnectionState.SignalReconnecting
+    ) {
+      setStatus('Переподключение…');
+      // Do not touch the camera while signaling is reconnecting. The
+      // RoomEvent.Reconnected handler will restart the capturer once the room is
+      // fully connected again.
+      return;
+    }
+
+    if (room.state === ConnectionState.Connected) {
+      await restoreLocalMedia(true);
+      return;
+    }
+
     if (room.state !== ConnectionState.Disconnected) {
-      if (
-        room.state === ConnectionState.Reconnecting ||
-        room.state === ConnectionState.SignalReconnecting
-      ) {
-        setStatus('Переподключение…');
-      } else if (room.state === ConnectionState.Connected) {
-        await restoreLocalMedia(true);
-      }
       return;
     }
 
@@ -161,6 +164,7 @@ export function CallScreen({route, navigation}: Props) {
 
     try {
       await room.connect(route.params.livekit.url, route.params.livekit.token);
+      await wait(300);
       await restoreLocalMedia(true);
       setStatus('В звонке');
     } catch (error) {
@@ -182,10 +186,9 @@ export function CallScreen({route, navigation}: Props) {
     const handleConnected = () => setStatus('В звонке');
     const handleReconnected = () => {
       setStatus('В звонке');
-      // A full reconnect frequently leaves Android's old camera capturer frozen,
-      // even though LiveKit still has a camera publication. Recreate it just as
-      // the manual camera off/on sequence does.
-      setTimeout(() => void restoreLocalMedia(true), 400);
+      // Wait until Android/LiveKit has finished restoring signaling and then
+      // restart the existing native camera capturer in-place.
+      setTimeout(() => void restoreLocalMedia(true), 700);
     };
     const handleReconnecting = () => setStatus('Переподключение…');
     const handleDisconnected = () => setStatus('Соединение потеряно');
@@ -205,10 +208,7 @@ export function CallScreen({route, navigation}: Props) {
         nextState === 'active' &&
         (previousState === 'background' || previousState === 'inactive')
       ) {
-        // Let Android restore the activity/network first. If the room is already
-        // connected, recoverConnection will hard-restart the camera immediately;
-        // otherwise RoomEvent.Reconnected will do it once signaling is back.
-        setTimeout(() => void recoverConnection(), 700);
+        setTimeout(() => void recoverConnection(), 900);
       }
     });
 
