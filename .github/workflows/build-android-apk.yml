@@ -50,6 +50,20 @@ jobs:
             --output android/gradle/wrapper/gradle-wrapper.jar \
             https://raw.githubusercontent.com/react-native-community/template/0.81.1/template/android/gradle/wrapper/gradle-wrapper.jar
 
+      - name: Generate debug signing keystore
+        run: |
+          keytool -genkeypair \
+            -v \
+            -storetype PKCS12 \
+            -keystore android/app/debug.keystore \
+            -storepass android \
+            -alias androiddebugkey \
+            -keypass android \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
+
       - name: Typecheck
         run: npm run typecheck
 
