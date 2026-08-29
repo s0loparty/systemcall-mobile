@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   build-release-apk:
-    name: Build release APK
+    name: Build release APK (ARM64)
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -34,7 +34,11 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
+
+      - name: Setup Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
 
       - name: Install JavaScript dependencies
         run: npm ci
@@ -52,14 +56,21 @@ jobs:
       - name: Run tests
         run: npm test
 
-      - name: Build release APK
+      - name: Build ARM64 release APK
         working-directory: android
-        run: java -classpath gradle/wrapper/gradle-wrapper.jar org.gradle.wrapper.GradleWrapperMain assembleRelease --no-daemon
+        run: >
+          java -classpath gradle/wrapper/gradle-wrapper.jar
+          org.gradle.wrapper.GradleWrapperMain
+          assembleRelease
+          -PreactNativeArchitectures=arm64-v8a
+          --build-cache
+          --parallel
+          --no-daemon
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: systemcall-mobile-release-${{ github.sha }}
+          name: systemcall-mobile-arm64-release-${{ github.sha }}
           path: android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
