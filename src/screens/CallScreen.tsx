@@ -77,51 +77,67 @@ export function CallScreen({route, navigation}: Props) {
     }
   }, [room]);
 
-  const restoreCamera = useCallback(async () => {
-    if (!desiredCameraRef.current) {
-      await room.localParticipant.setCameraEnabled(false);
-      return;
-    }
+  const restoreCamera = useCallback(
+    async (forceRecreate = false) => {
+      if (!desiredCameraRef.current) {
+        await room.localParticipant.setCameraEnabled(false);
+        return;
+      }
 
-    await room.localParticipant.setCameraEnabled(true);
-    await wait(250);
+      // Android may keep a publication object after returning from background
+      // while its native camera capturer is already stale. In that case checking
+      // publication.track is not enough. Recreate the camera capture explicitly.
+      if (forceRecreate) {
+        await room.localParticipant.setCameraEnabled(false);
+        await wait(180);
+        await room.localParticipant.setCameraEnabled(true);
+        await wait(350);
+        await applyCameraFacingMode();
+        return;
+      }
 
-    let publication = room.localParticipant.getTrackPublication(
-      Track.Source.Camera,
-    );
-
-    // A full Android reconnect can leave the old camera publication without
-    // a usable native track. Recreate it explicitly in that case.
-    if (!publication?.track) {
-      await room.localParticipant.setCameraEnabled(false);
-      await wait(100);
       await room.localParticipant.setCameraEnabled(true);
       await wait(250);
-      publication = room.localParticipant.getTrackPublication(Track.Source.Camera);
-    }
 
-    if (publication?.track) {
-      await applyCameraFacingMode();
-    }
-  }, [applyCameraFacingMode, room]);
-
-  const restoreLocalMedia = useCallback(async () => {
-    if (restoringMedia.current || room.state !== ConnectionState.Connected) {
-      return;
-    }
-
-    restoringMedia.current = true;
-    try {
-      await room.localParticipant.setMicrophoneEnabled(
-        desiredMicrophoneRef.current,
+      let publication = room.localParticipant.getTrackPublication(
+        Track.Source.Camera,
       );
-      await restoreCamera();
-    } catch (error) {
-      console.warn('LiveKit local media restore failed', error);
-    } finally {
-      restoringMedia.current = false;
-    }
-  }, [restoreCamera, room]);
+
+      if (!publication?.track) {
+        await room.localParticipant.setCameraEnabled(false);
+        await wait(100);
+        await room.localParticipant.setCameraEnabled(true);
+        await wait(250);
+        publication = room.localParticipant.getTrackPublication(Track.Source.Camera);
+      }
+
+      if (publication?.track) {
+        await applyCameraFacingMode();
+      }
+    },
+    [applyCameraFacingMode, room],
+  );
+
+  const restoreLocalMedia = useCallback(
+    async (forceCameraRecreate = false) => {
+      if (restoringMedia.current || room.state !== ConnectionState.Connected) {
+        return;
+      }
+
+      restoringMedia.current = true;
+      try {
+        await room.localParticipant.setMicrophoneEnabled(
+          desiredMicrophoneRef.current,
+        );
+        await restoreCamera(forceCameraRecreate);
+      } catch (error) {
+        console.warn('LiveKit local media restore failed', error);
+      } finally {
+        restoringMedia.current = false;
+      }
+    },
+    [restoreCamera, room],
+  );
 
   const recoverConnection = useCallback(async () => {
     if (reconnecting.current) {
@@ -135,7 +151,7 @@ export function CallScreen({route, navigation}: Props) {
       ) {
         setStatus('Переподключение…');
       } else if (room.state === ConnectionState.Connected) {
-        await restoreLocalMedia();
+        await restoreLocalMedia(true);
       }
       return;
     }
@@ -145,7 +161,7 @@ export function CallScreen({route, navigation}: Props) {
 
     try {
       await room.connect(route.params.livekit.url, route.params.livekit.token);
-      await restoreLocalMedia();
+      await restoreLocalMedia(true);
       setStatus('В звонке');
     } catch (error) {
       console.warn('LiveKit foreground reconnect failed', error);
@@ -166,7 +182,10 @@ export function CallScreen({route, navigation}: Props) {
     const handleConnected = () => setStatus('В звонке');
     const handleReconnected = () => {
       setStatus('В звонке');
-      setTimeout(() => void restoreLocalMedia(), 300);
+      // A full reconnect frequently leaves Android's old camera capturer frozen,
+      // even though LiveKit still has a camera publication. Recreate it just as
+      // the manual camera off/on sequence does.
+      setTimeout(() => void restoreLocalMedia(true), 400);
     };
     const handleReconnecting = () => setStatus('Переподключение…');
     const handleDisconnected = () => setStatus('Соединение потеряно');
@@ -186,7 +205,10 @@ export function CallScreen({route, navigation}: Props) {
         nextState === 'active' &&
         (previousState === 'background' || previousState === 'inactive')
       ) {
-        setTimeout(() => void recoverConnection(), 500);
+        // Let Android restore the activity/network first. If the room is already
+        // connected, recoverConnection will hard-restart the camera immediately;
+        // otherwise RoomEvent.Reconnected will do it once signaling is back.
+        setTimeout(() => void recoverConnection(), 700);
       }
     });
 
