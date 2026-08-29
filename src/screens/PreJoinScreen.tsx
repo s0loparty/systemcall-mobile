@@ -23,6 +23,7 @@ export function PreJoinScreen({route, navigation}: Props) {
   const [camera, setCamera] = useState(true);
   const [mic, setMic] = useState(true);
   const [name, setName] = useState('Гость');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [previewTrack, setPreviewTrack] = useState<LocalVideoTrack | null>(null);
@@ -135,6 +136,11 @@ export function PreJoinScreen({route, navigation}: Props) {
       return;
     }
 
+    if (route.params.hasPassword && !password) {
+      setError('Введите пароль комнаты.');
+      return;
+    }
+
     try {
       setLoading(true);
       setError(null);
@@ -147,8 +153,25 @@ export function PreJoinScreen({route, navigation}: Props) {
         return;
       }
 
-      const r = await joinRoom(route.params.publicId, name.trim());
+      const r = await joinRoom(
+        route.params.publicId,
+        name.trim(),
+        route.params.hasPassword ? password : undefined,
+      );
       stopPreview();
+
+      if ('waiting_room' in r) {
+        navigation.replace('WaitingRoom', {
+          publicId: route.params.publicId,
+          roomName: r.room.name,
+          waitingToken: r.waiting_token,
+          cameraEnabled: camera,
+          microphoneEnabled: mic,
+          cameraFacingMode: facingMode,
+        });
+        return;
+      }
+
       navigation.replace('Call', {
         roomName: r.room.name,
         livekit: r.livekit,
@@ -168,7 +191,11 @@ export function PreJoinScreen({route, navigation}: Props) {
       <View style={s.container}>
         <View>
           <Text style={s.title}>{route.params.roomName}</Text>
-          <Text style={s.sub}>Проверьте камеру и микрофон</Text>
+          <Text style={s.sub}>
+            {route.params.waitingRoomEnabled
+              ? 'После входа организатор должен будет вас допустить'
+              : 'Проверьте камеру и микрофон'}
+          </Text>
         </View>
         <View style={s.preview}>
           <LocalPreview track={previewTrack} enabled={camera} />
@@ -180,6 +207,18 @@ export function PreJoinScreen({route, navigation}: Props) {
           placeholderTextColor="#666"
           style={s.input}
         />
+        {route.params.hasPassword ? (
+          <TextInput
+            value={password}
+            onChangeText={setPassword}
+            placeholder="Пароль комнаты"
+            placeholderTextColor="#666"
+            secureTextEntry
+            autoCapitalize="none"
+            autoCorrect={false}
+            style={s.input}
+          />
+        ) : null}
         {error ? <Text style={s.error}>{error}</Text> : null}
         <View style={s.controls}>
           <MediaToggle
@@ -195,7 +234,7 @@ export function PreJoinScreen({route, navigation}: Props) {
           />
         </View>
         <PrimaryButton
-          label="Войти в звонок"
+          label={route.params.waitingRoomEnabled ? 'Запросить вход' : 'Войти в звонок'}
           loading={loading}
           onPress={join}
         />
