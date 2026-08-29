@@ -20,9 +20,9 @@ describe('parseRoomPublicId', () => {
   });
 
   it('falls back to the last path segment while the public route is not frozen', () => {
-    expect(parseRoomPublicId('https://systemcall.example/join/guest-room')).toBe(
-      'guest-room',
-    );
+    expect(
+      parseRoomPublicId('https://systemcall.example/join/guest-room'),
+    ).toBe('guest-room');
   });
 
   it('rejects empty and malformed values', () => {
@@ -31,6 +31,8 @@ describe('parseRoomPublicId', () => {
   });
 
   it('rejects unsupported protocols', () => {
-    expect(parseRoomPublicId('ftp://systemcall.example/rooms/abc123')).toBeNull();
+    expect(
+      parseRoomPublicId('ftp://systemcall.example/rooms/abc123'),
+    ).toBeNull();
   });
 });

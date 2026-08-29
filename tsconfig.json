@@ -1,1 +1,10 @@
-{"extends":"@react-native/typescript-config","compilerOptions":{"strict":true,"baseUrl":"."},"include":["src/**/*.ts","src/**/*.tsx"]}
+{
+  "extends": "@react-native/typescript-config",
+  "compilerOptions": {
+    "strict": true,
+    "ignoreDeprecations": "6.0",
+    "baseUrl": ".",
+    "jsx": "react-jsx"
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
+}

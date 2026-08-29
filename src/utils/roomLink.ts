@@ -1,1 +1,17 @@
-export function parseRoomPublicId(input:string):string|null{const value=input.trim();if(!value)return null;try{const url=new URL(value);if(url.protocol!=='https:'&&url.protocol!=='http:')return null;const segments=url.pathname.split('/').filter(Boolean);const i=segments.findIndex(s=>['room','rooms','call'].includes(s.toLowerCase()));if(i>=0&&segments[i+1])return decodeURIComponent(segments[i+1]);const last=segments.at(-1);return last?decodeURIComponent(last):null}catch{return null}}
+export function parseRoomPublicId(input: string): string | null {
+  const value = input.trim();
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+    const segments = url.pathname.split('/').filter(Boolean);
+    const i = segments.findIndex(s =>
+      ['room', 'rooms', 'call'].includes(s.toLowerCase()),
+    );
+    if (i >= 0 && segments[i + 1]) return decodeURIComponent(segments[i + 1]);
+    const last = segments.at(-1);
+    return last ? decodeURIComponent(last) : null;
+  } catch {
+    return null;
+  }
+}
