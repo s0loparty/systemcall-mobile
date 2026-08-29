@@ -2,9 +2,8 @@
   "extends": "@react-native/typescript-config",
   "compilerOptions": {
     "strict": true,
-    "ignoreDeprecations": "6.0",
-    "baseUrl": ".",
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM"]
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"]
 }
