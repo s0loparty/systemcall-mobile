@@ -4,6 +4,7 @@ import {createNativeStackNavigator} from '@react-navigation/native-stack';
 import {SafeAreaProvider} from 'react-native-safe-area-context';
 import {HomeScreen} from './screens/HomeScreen';
 import {PreJoinScreen} from './screens/PreJoinScreen';
+import {WaitingRoomScreen} from './screens/WaitingRoomScreen';
 import {CallScreen} from './screens/CallScreen';
 import type {RootStackParamList} from './navigation/types';
 
@@ -18,6 +19,11 @@ export default function App() {
           screenOptions={{headerShown: false, animation: 'fade'}}>
           <Stack.Screen name="Home" component={HomeScreen} />
           <Stack.Screen name="PreJoin" component={PreJoinScreen} />
+          <Stack.Screen
+            name="WaitingRoom"
+            component={WaitingRoomScreen}
+            options={{gestureEnabled: false}}
+          />
           <Stack.Screen
             name="Call"
             component={CallScreen}
