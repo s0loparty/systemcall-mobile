@@ -14,8 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-debug-apk:
-    name: Build debug APK
+  build-release-apk:
+    name: Build release APK
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -52,14 +52,14 @@ jobs:
       - name: Run tests
         run: npm test
 
-      - name: Build debug APK
+      - name: Build release APK
         working-directory: android
-        run: java -classpath gradle/wrapper/gradle-wrapper.jar org.gradle.wrapper.GradleWrapperMain assembleDebug --no-daemon
+        run: java -classpath gradle/wrapper/gradle-wrapper.jar org.gradle.wrapper.GradleWrapperMain assembleRelease --no-daemon
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: systemcall-mobile-debug-${{ github.sha }}
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: systemcall-mobile-release-${{ github.sha }}
+          path: android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
