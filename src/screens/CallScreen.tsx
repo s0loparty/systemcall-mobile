@@ -16,22 +16,34 @@ import {
 import type {NativeStackScreenProps} from '@react-navigation/native-stack';
 import {
   AudioSession,
+  isTrackReference,
   LiveKitRoom,
   useLocalParticipant,
+  useTracks,
+  VideoTrack,
 } from '@livekit/react-native';
-import {ConnectionState, Room, RoomEvent} from 'livekit-client';
+import {
+  ConnectionState,
+  type LocalVideoTrack,
+  Room,
+  RoomEvent,
+  Track,
+} from 'livekit-client';
 import {ParticipantGrid} from '../components/call/ParticipantGrid';
 import {MediaToggle} from '../components/call/MediaToggle';
 import {PrimaryButton} from '../components/PrimaryButton';
 import type {RootStackParamList} from '../navigation/types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Call'>;
+type FacingMode = 'user' | 'environment';
 
 type CallStatus =
   | 'Подключение…'
   | 'В звонке'
   | 'Переподключение…'
   | 'Соединение потеряно';
+
+const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 export function CallScreen({route, navigation}: Props) {
   const room = useMemo(
@@ -45,21 +57,71 @@ export function CallScreen({route, navigation}: Props) {
   const [desiredCameraEnabled, setDesiredCameraEnabled] = useState(
     route.params.cameraEnabled,
   );
+  const [cameraFacingMode, setCameraFacingMode] = useState<FacingMode>(
+    route.params.cameraFacingMode,
+  );
   const desiredMicrophoneRef = useRef(route.params.microphoneEnabled);
   const desiredCameraRef = useRef(route.params.cameraEnabled);
+  const cameraFacingModeRef = useRef<FacingMode>(route.params.cameraFacingMode);
   const appState = useRef<AppStateStatus>(AppState.currentState);
   const reconnecting = useRef(false);
+  const restoringMedia = useRef(false);
+
+  const applyCameraFacingMode = useCallback(async () => {
+    const publication = room.localParticipant.getTrackPublication(
+      Track.Source.Camera,
+    );
+    const track = publication?.track as LocalVideoTrack | undefined;
+    if (track) {
+      await track.restartTrack({facingMode: cameraFacingModeRef.current});
+    }
+  }, [room]);
+
+  const restoreCamera = useCallback(async () => {
+    if (!desiredCameraRef.current) {
+      await room.localParticipant.setCameraEnabled(false);
+      return;
+    }
+
+    await room.localParticipant.setCameraEnabled(true);
+    await wait(250);
+
+    let publication = room.localParticipant.getTrackPublication(
+      Track.Source.Camera,
+    );
+
+    // A full Android reconnect can leave the old camera publication without
+    // a usable native track. Recreate it explicitly in that case.
+    if (!publication?.track) {
+      await room.localParticipant.setCameraEnabled(false);
+      await wait(100);
+      await room.localParticipant.setCameraEnabled(true);
+      await wait(250);
+      publication = room.localParticipant.getTrackPublication(Track.Source.Camera);
+    }
+
+    if (publication?.track) {
+      await applyCameraFacingMode();
+    }
+  }, [applyCameraFacingMode, room]);
 
   const restoreLocalMedia = useCallback(async () => {
+    if (restoringMedia.current || room.state !== ConnectionState.Connected) {
+      return;
+    }
+
+    restoringMedia.current = true;
     try {
       await room.localParticipant.setMicrophoneEnabled(
         desiredMicrophoneRef.current,
       );
-      await room.localParticipant.setCameraEnabled(desiredCameraRef.current);
+      await restoreCamera();
     } catch (error) {
       console.warn('LiveKit local media restore failed', error);
+    } finally {
+      restoringMedia.current = false;
     }
-  }, [room]);
+  }, [restoreCamera, room]);
 
   const recoverConnection = useCallback(async () => {
     if (reconnecting.current) {
@@ -101,12 +163,10 @@ export function CallScreen({route, navigation}: Props) {
   useEffect(() => {
     void AudioSession.startAudioSession();
 
-    const handleConnected = () => {
-      setStatus('В звонке');
-    };
+    const handleConnected = () => setStatus('В звонке');
     const handleReconnected = () => {
       setStatus('В звонке');
-      void restoreLocalMedia();
+      setTimeout(() => void restoreLocalMedia(), 300);
     };
     const handleReconnecting = () => setStatus('Переподключение…');
     const handleDisconnected = () => setStatus('Соединение потеряно');
@@ -122,18 +182,12 @@ export function CallScreen({route, navigation}: Props) {
       const previousState = appState.current;
       appState.current = nextState;
 
-      const returningToForeground =
+      if (
         nextState === 'active' &&
-        (previousState === 'background' || previousState === 'inactive');
-
-      if (!returningToForeground) {
-        return;
+        (previousState === 'background' || previousState === 'inactive')
+      ) {
+        setTimeout(() => void recoverConnection(), 500);
       }
-
-      // Give the JS runtime / network stack a moment to become active again.
-      setTimeout(() => {
-        void recoverConnection();
-      }, 500);
     });
 
     return () => {
@@ -152,7 +206,6 @@ export function CallScreen({route, navigation}: Props) {
     async (enabled: boolean) => {
       desiredMicrophoneRef.current = enabled;
       setDesiredMicrophoneEnabled(enabled);
-
       try {
         await room.localParticipant.setMicrophoneEnabled(enabled);
       } catch (error) {
@@ -166,15 +219,35 @@ export function CallScreen({route, navigation}: Props) {
     async (enabled: boolean) => {
       desiredCameraRef.current = enabled;
       setDesiredCameraEnabled(enabled);
-
       try {
-        await room.localParticipant.setCameraEnabled(enabled);
+        if (enabled) {
+          await restoreCamera();
+        } else {
+          await room.localParticipant.setCameraEnabled(false);
+        }
       } catch (error) {
         console.warn('LiveKit camera toggle failed', error);
       }
     },
-    [room],
+    [restoreCamera, room],
   );
+
+  const switchCamera = useCallback(async () => {
+    const next: FacingMode =
+      cameraFacingModeRef.current === 'user' ? 'environment' : 'user';
+    cameraFacingModeRef.current = next;
+    setCameraFacingMode(next);
+
+    if (!desiredCameraRef.current) {
+      return;
+    }
+
+    try {
+      await applyCameraFacingMode();
+    } catch (error) {
+      console.warn('LiveKit camera switch failed', error);
+    }
+  }, [applyCameraFacingMode]);
 
   return (
     <LiveKitRoom
@@ -186,16 +259,16 @@ export function CallScreen({route, navigation}: Props) {
       video={route.params.cameraEnabled}
       onConnected={() => setStatus('В звонке')}
       onDisconnected={() => setStatus('Соединение потеряно')}
-      onError={error => {
-        console.warn('LiveKit room error', error);
-      }}>
+      onError={error => console.warn('LiveKit room error', error)}>
       <Content
         roomName={route.params.roomName}
         status={status}
         desiredMicrophoneEnabled={desiredMicrophoneEnabled}
         desiredCameraEnabled={desiredCameraEnabled}
+        cameraFacingMode={cameraFacingMode}
         onMicrophoneChange={changeMicrophone}
         onCameraChange={changeCamera}
+        onSwitchCamera={switchCamera}
         onLeave={() => navigation.popToTop()}
       />
     </LiveKitRoom>
@@ -207,28 +280,28 @@ function Content({
   status,
   desiredMicrophoneEnabled,
   desiredCameraEnabled,
+  cameraFacingMode,
   onMicrophoneChange,
   onCameraChange,
+  onSwitchCamera,
   onLeave,
 }: {
   roomName: string;
   status: CallStatus;
   desiredMicrophoneEnabled: boolean;
   desiredCameraEnabled: boolean;
+  cameraFacingMode: FacingMode;
   onMicrophoneChange: (enabled: boolean) => Promise<void>;
   onCameraChange: (enabled: boolean) => Promise<void>;
+  onSwitchCamera: () => Promise<void>;
   onLeave: () => void;
 }) {
-  const {localParticipant, isMicrophoneEnabled, isCameraEnabled} =
-    useLocalParticipant();
-
-  const mic = useCallback(() => {
-    void onMicrophoneChange(!desiredMicrophoneEnabled);
-  }, [desiredMicrophoneEnabled, onMicrophoneChange]);
-
-  const cam = useCallback(() => {
-    void onCameraChange(!desiredCameraEnabled);
-  }, [desiredCameraEnabled, onCameraChange]);
+  const {isMicrophoneEnabled, isCameraEnabled} = useLocalParticipant();
+  const localTracks = useTracks(
+    [{source: Track.Source.Camera, withPlaceholder: true}],
+    {onlySubscribed: false},
+  ).filter(track => track.participant?.isLocal);
+  const localCamera = localTracks[0];
 
   const mediaIsSynchronizing =
     status === 'Подключение…' || status === 'Переподключение…';
@@ -242,6 +315,15 @@ function Content({
         </View>
         <View style={s.grid}>
           <ParticipantGrid />
+          <View style={s.selfView}>
+            {desiredCameraEnabled && localCamera && isTrackReference(localCamera) ? (
+              <VideoTrack trackRef={localCamera} style={s.selfVideo} />
+            ) : (
+              <View style={s.selfPlaceholder}>
+                <Text style={s.selfText}>Вы</Text>
+              </View>
+            )}
+          </View>
         </View>
         <View style={s.controls}>
           <MediaToggle
@@ -251,14 +333,19 @@ function Content({
                 ? desiredMicrophoneEnabled
                 : isMicrophoneEnabled
             }
-            onPress={mic}
+            onPress={() => void onMicrophoneChange(!desiredMicrophoneEnabled)}
           />
           <MediaToggle
             label="Камера"
             active={
               mediaIsSynchronizing ? desiredCameraEnabled : isCameraEnabled
             }
-            onPress={cam}
+            onPress={() => void onCameraChange(!desiredCameraEnabled)}
+          />
+          <MediaToggle
+            label={cameraFacingMode === 'user' ? 'Фронтальная' : 'Основная'}
+            active={desiredCameraEnabled}
+            onPress={() => void onSwitchCamera()}
           />
         </View>
         <PrimaryButton label="Завершить" danger onPress={onLeave} />
@@ -272,6 +359,21 @@ const s = StyleSheet.create({
   container: {flex: 1, padding: 14, gap: 14},
   title: {color: '#fff', fontSize: 20, fontWeight: '800'},
   status: {color: '#7f7f7f'},
-  grid: {flex: 1},
+  grid: {flex: 1, position: 'relative'},
   controls: {flexDirection: 'row', justifyContent: 'center', gap: 8},
+  selfView: {
+    position: 'absolute',
+    right: 10,
+    bottom: 10,
+    width: 112,
+    height: 154,
+    overflow: 'hidden',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#2b2b2b',
+    backgroundColor: '#171717',
+  },
+  selfVideo: {flex: 1},
+  selfPlaceholder: {flex: 1, alignItems: 'center', justifyContent: 'center'},
+  selfText: {color: '#aaa', fontWeight: '700'},
 });
