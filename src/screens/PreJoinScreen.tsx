@@ -36,7 +36,7 @@ export function PreJoinScreen({route, navigation}: Props) {
   }, []);
 
   const startPreview = useCallback(
-    async (nextFacingMode: 'user' | 'environment' = facingMode) => {
+    async (nextFacingMode: 'user' | 'environment') => {
       try {
         if (Platform.OS === 'android') {
           const result = await PermissionsAndroid.request(
@@ -60,7 +60,7 @@ export function PreJoinScreen({route, navigation}: Props) {
         setError('Не удалось запустить камеру.');
       }
     },
-    [facingMode, stopPreview],
+    [stopPreview],
   );
 
   useEffect(() => {
@@ -76,8 +76,8 @@ export function PreJoinScreen({route, navigation}: Props) {
     }
 
     setCamera(true);
-    void startPreview();
-  }, [camera, startPreview, stopPreview]);
+    void startPreview(facingMode);
+  }, [camera, facingMode, startPreview, stopPreview]);
 
   const switchCamera = useCallback(async () => {
     const next = facingMode === 'user' ? 'environment' : 'user';
@@ -102,6 +102,7 @@ export function PreJoinScreen({route, navigation}: Props) {
         livekit: r.livekit,
         cameraEnabled: camera,
         microphoneEnabled: mic,
+        cameraFacingMode: facingMode,
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось войти.');
