@@ -66,6 +66,7 @@ export function CallScreen({route, navigation}: Props) {
   const appState = useRef<AppStateStatus>(AppState.currentState);
   const reconnecting = useRef(false);
   const restoringMedia = useRef(false);
+  const lastForcedCameraRecoveryAt = useRef(0);
 
   const getCameraTrack = useCallback(() => {
     const publication = room.localParticipant.getTrackPublication(
@@ -82,39 +83,41 @@ export function CallScreen({route, navigation}: Props) {
   }, [getCameraTrack]);
 
   const restoreCamera = useCallback(
-    async (forceRestart = false) => {
+    async (forceRecreate = false) => {
       if (!desiredCameraRef.current) {
         await room.localParticipant.setCameraEnabled(false);
         return;
       }
 
-      const existingTrack = getCameraTrack();
+      if (forceRecreate) {
+        const now = Date.now();
+        if (now - lastForcedCameraRecoveryAt.current < 2500) {
+          return;
+        }
+        lastForcedCameraRecoveryAt.current = now;
 
-      // On Android the publication can survive backgrounding while its native
-      // capturer becomes stale. Restart the existing track in-place instead of
-      // toggling camera OFF first: turning it off during reconnect can leave
-      // LiveKit with no working camera until the user manually toggles it again.
-      if (forceRestart && existingTrack) {
-        await existingTrack.restartTrack({
+        // The Android log shows restartTrack({facingMode}) being merged with a
+        // stale deviceId="default", which makes react-native-webrtc throw an
+        // OverconstrainedError. Recreate the camera track with only the desired
+        // facingMode instead of restarting the stale track.
+        await room.localParticipant.setCameraEnabled(false);
+        await wait(250);
+        await room.localParticipant.setCameraEnabled(true, {
           facingMode: cameraFacingModeRef.current,
         });
-        await wait(300);
+        await wait(500);
         return;
       }
 
-      await room.localParticipant.setCameraEnabled(true);
-      await wait(300);
-
-      const track = getCameraTrack();
-      if (track) {
-        await track.restartTrack({facingMode: cameraFacingModeRef.current});
-      }
+      await room.localParticipant.setCameraEnabled(true, {
+        facingMode: cameraFacingModeRef.current,
+      });
     },
-    [getCameraTrack, room],
+    [room],
   );
 
   const restoreLocalMedia = useCallback(
-    async (forceCameraRestart = false) => {
+    async (forceCameraRecreate = false) => {
       if (restoringMedia.current || room.state !== ConnectionState.Connected) {
         return;
       }
@@ -124,7 +127,7 @@ export function CallScreen({route, navigation}: Props) {
         await room.localParticipant.setMicrophoneEnabled(
           desiredMicrophoneRef.current,
         );
-        await restoreCamera(forceCameraRestart);
+        await restoreCamera(forceCameraRecreate);
       } catch (error) {
         console.warn('LiveKit local media restore failed', error);
       } finally {
@@ -144,14 +147,17 @@ export function CallScreen({route, navigation}: Props) {
       room.state === ConnectionState.SignalReconnecting
     ) {
       setStatus('Переподключение…');
-      // Do not touch the camera while signaling is reconnecting. The
-      // RoomEvent.Reconnected handler will restart the capturer once the room is
-      // fully connected again.
       return;
     }
 
     if (room.state === ConnectionState.Connected) {
-      await restoreLocalMedia(true);
+      // Give Android and the LiveKit signaling state time to settle after the
+      // Activity becomes active. A Reconnected event may arrive during this
+      // delay; the camera recovery timestamp prevents duplicate recreations.
+      await wait(1200);
+      if (room.state === ConnectionState.Connected) {
+        await restoreLocalMedia(true);
+      }
       return;
     }
 
@@ -164,7 +170,7 @@ export function CallScreen({route, navigation}: Props) {
 
     try {
       await room.connect(route.params.livekit.url, route.params.livekit.token);
-      await wait(300);
+      await wait(700);
       await restoreLocalMedia(true);
       setStatus('В звонке');
     } catch (error) {
@@ -186,9 +192,7 @@ export function CallScreen({route, navigation}: Props) {
     const handleConnected = () => setStatus('В звонке');
     const handleReconnected = () => {
       setStatus('В звонке');
-      // Wait until Android/LiveKit has finished restoring signaling and then
-      // restart the existing native camera capturer in-place.
-      setTimeout(() => void restoreLocalMedia(true), 700);
+      setTimeout(() => void restoreLocalMedia(true), 900);
     };
     const handleReconnecting = () => setStatus('Переподключение…');
     const handleDisconnected = () => setStatus('Соединение потеряно');
@@ -208,7 +212,7 @@ export function CallScreen({route, navigation}: Props) {
         nextState === 'active' &&
         (previousState === 'background' || previousState === 'inactive')
       ) {
-        setTimeout(() => void recoverConnection(), 900);
+        setTimeout(() => void recoverConnection(), 500);
       }
     });
 
