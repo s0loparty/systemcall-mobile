@@ -28,6 +28,43 @@ export function PreJoinScreen({route, navigation}: Props) {
   const [previewTrack, setPreviewTrack] = useState<LocalVideoTrack | null>(null);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const previewTrackRef = useRef<LocalVideoTrack | null>(null);
+  type AndroidPermission =
+    (typeof PermissionsAndroid.PERMISSIONS)[keyof typeof PermissionsAndroid.PERMISSIONS];
+
+  const requestAndroidPermission = useCallback(async (permission: AndroidPermission) => {
+    if (Platform.OS !== 'android') {
+      return true;
+    }
+
+    const granted = await PermissionsAndroid.request(permission);
+    return granted === PermissionsAndroid.RESULTS.GRANTED;
+  }, []);
+
+  const ensureCameraPermission = useCallback(async () => {
+    const granted = await requestAndroidPermission(
+      PermissionsAndroid.PERMISSIONS.CAMERA,
+    );
+
+    if (!granted) {
+      setCamera(false);
+      setError('Разрешите доступ к камере.');
+    }
+
+    return granted;
+  }, [requestAndroidPermission]);
+
+  const ensureMicrophonePermission = useCallback(async () => {
+    const granted = await requestAndroidPermission(
+      PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+    );
+
+    if (!granted) {
+      setMic(false);
+      setError('Разрешите доступ к микрофону.');
+    }
+
+    return granted;
+  }, [requestAndroidPermission]);
 
   const stopPreview = useCallback(() => {
     previewTrackRef.current?.stop();
@@ -38,15 +75,8 @@ export function PreJoinScreen({route, navigation}: Props) {
   const startPreview = useCallback(
     async (nextFacingMode: 'user' | 'environment') => {
       try {
-        if (Platform.OS === 'android') {
-          const result = await PermissionsAndroid.request(
-            PermissionsAndroid.PERMISSIONS.CAMERA,
-          );
-          if (result !== PermissionsAndroid.RESULTS.GRANTED) {
-            setCamera(false);
-            setError('Разрешите доступ к камере.');
-            return;
-          }
+        if (!(await ensureCameraPermission())) {
+          return;
         }
 
         stopPreview();
@@ -60,7 +90,7 @@ export function PreJoinScreen({route, navigation}: Props) {
         setError('Не удалось запустить камеру.');
       }
     },
-    [stopPreview],
+    [ensureCameraPermission, stopPreview],
   );
 
   useEffect(() => {
@@ -79,6 +109,18 @@ export function PreJoinScreen({route, navigation}: Props) {
     void startPreview(facingMode);
   }, [camera, facingMode, startPreview, stopPreview]);
 
+  const toggleMicrophone = useCallback(async () => {
+    if (mic) {
+      setMic(false);
+      return;
+    }
+
+    if (await ensureMicrophonePermission()) {
+      setMic(true);
+      setError(null);
+    }
+  }, [ensureMicrophonePermission, mic]);
+
   const switchCamera = useCallback(async () => {
     const next = facingMode === 'user' ? 'environment' : 'user';
     setFacingMode(next);
@@ -92,9 +134,19 @@ export function PreJoinScreen({route, navigation}: Props) {
       setError('Введите имя.');
       return;
     }
+
     try {
       setLoading(true);
       setError(null);
+
+      if (camera && !(await ensureCameraPermission())) {
+        return;
+      }
+
+      if (mic && !(await ensureMicrophonePermission())) {
+        return;
+      }
+
       const r = await joinRoom(route.params.publicId, name.trim());
       stopPreview();
       navigation.replace('Call', {
@@ -133,7 +185,7 @@ export function PreJoinScreen({route, navigation}: Props) {
           <MediaToggle
             label="Микрофон"
             active={mic}
-            onPress={() => setMic(v => !v)}
+            onPress={() => void toggleMicrophone()}
           />
           <MediaToggle label="Камера" active={camera} onPress={toggleCamera} />
           <MediaToggle

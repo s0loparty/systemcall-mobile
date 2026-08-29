@@ -14,19 +14,24 @@ class CallForegroundService : Service() {
     companion object {
         const val CHANNEL_ID = "systemcall_active_call"
         const val NOTIFICATION_ID = 9001
+        const val EXTRA_CAMERA_ENABLED = "cameraEnabled"
+        const val EXTRA_MICROPHONE_ENABLED = "microphoneEnabled"
     }
+
+    private var cameraEnabled = true
+    private var microphoneEnabled = true
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-
-        // startForegroundService() gives us only a short window to promote the
-        // service. Do it immediately in onCreate(), before any other work.
-        promoteToForeground(buildNotification())
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Keep the notification current if Android delivers another start.
+        cameraEnabled = intent?.getBooleanExtra(EXTRA_CAMERA_ENABLED, cameraEnabled) ?: cameraEnabled
+        microphoneEnabled =
+            intent?.getBooleanExtra(EXTRA_MICROPHONE_ENABLED, microphoneEnabled)
+                ?: microphoneEnabled
+
         promoteToForeground(buildNotification())
         return START_NOT_STICKY
     }
@@ -63,12 +68,21 @@ class CallForegroundService : Service() {
             .build()
 
     private fun promoteToForeground(notification: Notification) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        val foregroundTypes =
+            buildList {
+                if (cameraEnabled) {
+                    add(ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA)
+                }
+                if (microphoneEnabled) {
+                    add(ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+                }
+            }.fold(0) { acc, type -> acc or type }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && foregroundTypes != 0) {
             startForeground(
                 NOTIFICATION_ID,
                 notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA or
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
+                foregroundTypes,
             )
         } else {
             startForeground(NOTIFICATION_ID, notification)

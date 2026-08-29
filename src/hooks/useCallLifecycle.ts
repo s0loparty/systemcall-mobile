@@ -151,7 +151,10 @@ export function useCallLifecycle(
     }
 
     try {
-      await backgroundCallApi.start();
+      await backgroundCallApi.start({
+        cameraEnabled: desiredCameraRef.current,
+        microphoneEnabled: desiredMicrophoneRef.current,
+      });
     } catch (error) {
       if (!leaving.current) {
         console.warn('Background call service resume failed', error);
