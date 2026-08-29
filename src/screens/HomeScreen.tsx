@@ -1,5 +1,13 @@
 import React, {useState} from 'react';
-import {StyleSheet, Text, TextInput, View} from 'react-native';
+import {
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import type {NativeStackScreenProps} from '@react-navigation/native-stack';
 import {PrimaryButton} from '../components/PrimaryButton';
@@ -21,6 +29,7 @@ export function HomeScreen({navigation}: Props) {
       setError('Вставьте корректную ссылку на звонок.');
       return;
     }
+
     try {
       setLoading(true);
       const room = await getRoom(id);
@@ -38,29 +47,41 @@ export function HomeScreen({navigation}: Props) {
 
   return (
     <SafeAreaView style={s.safe} edges={['top', 'bottom', 'left', 'right']}>
-      <View style={s.container}>
-        <View>
-          <Text style={s.eyebrow}>SYSTEMCALL</Text>
-          <Text style={s.title}>Войти в звонок</Text>
-          <Text style={s.desc}>
-            Скопируйте ссылку на комнату и вставьте её сюда.
-          </Text>
-        </View>
-        <View style={s.form}>
-          <TextInput
-            value={link}
-            onChangeText={setLink}
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="url"
-            placeholder="https://…/rooms/abc123"
-            placeholderTextColor="#666"
-            style={s.input}
-          />
-          {error ? <Text style={s.error}>{error}</Text> : null}
-          <PrimaryButton label="Продолжить" loading={loading} onPress={go} />
-        </View>
-      </View>
+      <KeyboardAvoidingView
+        style={s.safe}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <ScrollView
+          contentContainerStyle={s.container}
+          keyboardShouldPersistTaps="handled"
+          bounces={false}>
+          <View>
+            <Text style={s.eyebrow}>SYSTEMCALL</Text>
+            <Text style={s.title}>Войти в звонок</Text>
+            <Text style={s.desc}>
+              Скопируйте ссылку на комнату и вставьте её сюда.
+            </Text>
+          </View>
+
+          <View style={s.form}>
+            <TextInput
+              value={link}
+              onChangeText={setLink}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="url"
+              placeholder="https://.../rooms/abc123"
+              placeholderTextColor="#666"
+              style={s.input}
+            />
+            {error ? <Text style={s.error}>{error}</Text> : null}
+            <PrimaryButton
+              label="Продолжить"
+              loading={loading}
+              onPress={go}
+            />
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -68,7 +89,7 @@ export function HomeScreen({navigation}: Props) {
 const s = StyleSheet.create({
   safe: {flex: 1, backgroundColor: '#0b0b0b'},
   container: {
-    flex: 1,
+    flexGrow: 1,
     justifyContent: 'space-between',
     paddingHorizontal: 20,
     paddingVertical: 28,
