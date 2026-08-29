@@ -1,6 +1,10 @@
 import React, {useEffect, useMemo} from 'react';
 import {StyleSheet, Text, View} from 'react-native';
-import {RTCView, MediaStream} from '@livekit/react-native-webrtc';
+import {
+  RTCView,
+  MediaStream,
+  type MediaStreamTrack as ReactNativeMediaStreamTrack,
+} from '@livekit/react-native-webrtc';
 import type {LocalVideoTrack} from 'livekit-client';
 
 type Props = {
@@ -15,7 +19,13 @@ export function LocalPreview({track, enabled, compact = false}: Props) {
       return null;
     }
 
-    return new MediaStream([track.mediaStreamTrack]);
+    // livekit-client exposes the native WebRTC track through the DOM-style
+    // MediaStreamTrack type, while react-native-webrtc expects its own wrapper
+    // type. At runtime this is the same native track instance.
+    const nativeTrack =
+      track.mediaStreamTrack as unknown as ReactNativeMediaStreamTrack;
+
+    return new MediaStream([nativeTrack]);
   }, [track]);
 
   useEffect(() => {
