@@ -39,8 +39,27 @@ export function CallScreen({route, navigation}: Props) {
     [],
   );
   const [status, setStatus] = useState<CallStatus>('Подключение…');
+  const [desiredMicrophoneEnabled, setDesiredMicrophoneEnabled] = useState(
+    route.params.microphoneEnabled,
+  );
+  const [desiredCameraEnabled, setDesiredCameraEnabled] = useState(
+    route.params.cameraEnabled,
+  );
+  const desiredMicrophoneRef = useRef(route.params.microphoneEnabled);
+  const desiredCameraRef = useRef(route.params.cameraEnabled);
   const appState = useRef<AppStateStatus>(AppState.currentState);
   const reconnecting = useRef(false);
+
+  const restoreLocalMedia = useCallback(async () => {
+    try {
+      await room.localParticipant.setMicrophoneEnabled(
+        desiredMicrophoneRef.current,
+      );
+      await room.localParticipant.setCameraEnabled(desiredCameraRef.current);
+    } catch (error) {
+      console.warn('LiveKit local media restore failed', error);
+    }
+  }, [room]);
 
   const recoverConnection = useCallback(async () => {
     if (reconnecting.current) {
@@ -53,6 +72,8 @@ export function CallScreen({route, navigation}: Props) {
         room.state === ConnectionState.SignalReconnecting
       ) {
         setStatus('Переподключение…');
+      } else if (room.state === ConnectionState.Connected) {
+        await restoreLocalMedia();
       }
       return;
     }
@@ -62,24 +83,37 @@ export function CallScreen({route, navigation}: Props) {
 
     try {
       await room.connect(route.params.livekit.url, route.params.livekit.token);
+      await restoreLocalMedia();
+      setStatus('В звонке');
     } catch (error) {
       console.warn('LiveKit foreground reconnect failed', error);
       setStatus('Соединение потеряно');
     } finally {
       reconnecting.current = false;
     }
-  }, [room, route.params.livekit.token, route.params.livekit.url]);
+  }, [
+    restoreLocalMedia,
+    room,
+    route.params.livekit.token,
+    route.params.livekit.url,
+  ]);
 
   useEffect(() => {
     void AudioSession.startAudioSession();
 
-    const handleConnected = () => setStatus('В звонке');
+    const handleConnected = () => {
+      setStatus('В звонке');
+    };
+    const handleReconnected = () => {
+      setStatus('В звонке');
+      void restoreLocalMedia();
+    };
     const handleReconnecting = () => setStatus('Переподключение…');
     const handleDisconnected = () => setStatus('Соединение потеряно');
 
     room
       .on(RoomEvent.Connected, handleConnected)
-      .on(RoomEvent.Reconnected, handleConnected)
+      .on(RoomEvent.Reconnected, handleReconnected)
       .on(RoomEvent.Reconnecting, handleReconnecting)
       .on(RoomEvent.SignalReconnecting, handleReconnecting)
       .on(RoomEvent.Disconnected, handleDisconnected);
@@ -106,13 +140,41 @@ export function CallScreen({route, navigation}: Props) {
       subscription.remove();
       room
         .off(RoomEvent.Connected, handleConnected)
-        .off(RoomEvent.Reconnected, handleConnected)
+        .off(RoomEvent.Reconnected, handleReconnected)
         .off(RoomEvent.Reconnecting, handleReconnecting)
         .off(RoomEvent.SignalReconnecting, handleReconnecting)
         .off(RoomEvent.Disconnected, handleDisconnected);
       void AudioSession.stopAudioSession();
     };
-  }, [recoverConnection, room]);
+  }, [recoverConnection, restoreLocalMedia, room]);
+
+  const changeMicrophone = useCallback(
+    async (enabled: boolean) => {
+      desiredMicrophoneRef.current = enabled;
+      setDesiredMicrophoneEnabled(enabled);
+
+      try {
+        await room.localParticipant.setMicrophoneEnabled(enabled);
+      } catch (error) {
+        console.warn('LiveKit microphone toggle failed', error);
+      }
+    },
+    [room],
+  );
+
+  const changeCamera = useCallback(
+    async (enabled: boolean) => {
+      desiredCameraRef.current = enabled;
+      setDesiredCameraEnabled(enabled);
+
+      try {
+        await room.localParticipant.setCameraEnabled(enabled);
+      } catch (error) {
+        console.warn('LiveKit camera toggle failed', error);
+      }
+    },
+    [room],
+  );
 
   return (
     <LiveKitRoom
@@ -130,6 +192,10 @@ export function CallScreen({route, navigation}: Props) {
       <Content
         roomName={route.params.roomName}
         status={status}
+        desiredMicrophoneEnabled={desiredMicrophoneEnabled}
+        desiredCameraEnabled={desiredCameraEnabled}
+        onMicrophoneChange={changeMicrophone}
+        onCameraChange={changeCamera}
         onLeave={() => navigation.popToTop()}
       />
     </LiveKitRoom>
@@ -139,22 +205,33 @@ export function CallScreen({route, navigation}: Props) {
 function Content({
   roomName,
   status,
+  desiredMicrophoneEnabled,
+  desiredCameraEnabled,
+  onMicrophoneChange,
+  onCameraChange,
   onLeave,
 }: {
   roomName: string;
   status: CallStatus;
+  desiredMicrophoneEnabled: boolean;
+  desiredCameraEnabled: boolean;
+  onMicrophoneChange: (enabled: boolean) => Promise<void>;
+  onCameraChange: (enabled: boolean) => Promise<void>;
   onLeave: () => void;
 }) {
   const {localParticipant, isMicrophoneEnabled, isCameraEnabled} =
     useLocalParticipant();
 
   const mic = useCallback(() => {
-    void localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled);
-  }, [localParticipant, isMicrophoneEnabled]);
+    void onMicrophoneChange(!desiredMicrophoneEnabled);
+  }, [desiredMicrophoneEnabled, onMicrophoneChange]);
 
   const cam = useCallback(() => {
-    void localParticipant.setCameraEnabled(!isCameraEnabled);
-  }, [localParticipant, isCameraEnabled]);
+    void onCameraChange(!desiredCameraEnabled);
+  }, [desiredCameraEnabled, onCameraChange]);
+
+  const mediaIsSynchronizing =
+    status === 'Подключение…' || status === 'Переподключение…';
 
   return (
     <SafeAreaView style={s.safe}>
@@ -169,10 +246,20 @@ function Content({
         <View style={s.controls}>
           <MediaToggle
             label="Микрофон"
-            active={isMicrophoneEnabled}
+            active={
+              mediaIsSynchronizing
+                ? desiredMicrophoneEnabled
+                : isMicrophoneEnabled
+            }
             onPress={mic}
           />
-          <MediaToggle label="Камера" active={isCameraEnabled} onPress={cam} />
+          <MediaToggle
+            label="Камера"
+            active={
+              mediaIsSynchronizing ? desiredCameraEnabled : isCameraEnabled
+            }
+            onPress={cam}
+          />
         </View>
         <PrimaryButton label="Завершить" danger onPress={onLeave} />
       </View>
