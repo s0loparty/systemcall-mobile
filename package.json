@@ -18,7 +18,7 @@
     "@react-navigation/native-stack": "7.18.10",
     "@videosdk.live/react-native-pip-android": "0.0.3",
     "livekit-client": "2.22.1",
-    "react": "19.1.1",
+    "react": "19.1.0",
     "react-native": "0.81.1",
     "react-native-safe-area-context": "5.8.0",
     "react-native-screens": "4.24.0"
@@ -38,7 +38,7 @@
     "eslint": "8.57.1",
     "jest": "29.7.0",
     "prettier": "3.6.2",
-    "react-test-renderer": "19.1.1",
+    "react-test-renderer": "19.1.0",
     "typescript": "5.9.2"
   },
   "jest": {
