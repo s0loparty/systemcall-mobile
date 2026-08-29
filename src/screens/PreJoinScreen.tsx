@@ -2,12 +2,12 @@ import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {
   PermissionsAndroid,
   Platform,
-  SafeAreaView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import {SafeAreaView} from 'react-native-safe-area-context';
 import type {NativeStackScreenProps} from '@react-navigation/native-stack';
 import {createLocalVideoTrack} from 'livekit-client';
 import type {LocalVideoTrack} from 'livekit-client';
@@ -112,7 +112,7 @@ export function PreJoinScreen({route, navigation}: Props) {
   }
 
   return (
-    <SafeAreaView style={s.safe}>
+    <SafeAreaView style={s.safe} edges={['top', 'bottom', 'left', 'right']}>
       <View style={s.container}>
         <View>
           <Text style={s.title}>{route.params.roomName}</Text>
