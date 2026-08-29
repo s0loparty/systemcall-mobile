@@ -32,6 +32,7 @@ import {
 import {ParticipantGrid} from '../components/call/ParticipantGrid';
 import {MediaToggle} from '../components/call/MediaToggle';
 import {PrimaryButton} from '../components/PrimaryButton';
+import {backgroundCall} from '../native/backgroundCall';
 import type {RootStackParamList} from '../navigation/types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Call'>;
@@ -96,10 +97,6 @@ export function CallScreen({route, navigation}: Props) {
         }
         lastForcedCameraRecoveryAt.current = now;
 
-        // The Android log shows restartTrack({facingMode}) being merged with a
-        // stale deviceId="default", which makes react-native-webrtc throw an
-        // OverconstrainedError. Recreate the camera track with only the desired
-        // facingMode instead of restarting the stale track.
         await room.localParticipant.setCameraEnabled(false);
         await wait(250);
         await room.localParticipant.setCameraEnabled(true, {
@@ -151,9 +148,6 @@ export function CallScreen({route, navigation}: Props) {
     }
 
     if (room.state === ConnectionState.Connected) {
-      // Give Android and the LiveKit signaling state time to settle after the
-      // Activity becomes active. A Reconnected event may arrive during this
-      // delay; the camera recovery timestamp prevents duplicate recreations.
       await wait(1200);
       if (room.state === ConnectionState.Connected) {
         await restoreLocalMedia(true);
@@ -188,6 +182,13 @@ export function CallScreen({route, navigation}: Props) {
 
   useEffect(() => {
     void AudioSession.startAudioSession();
+
+    // Start while the Activity is visible. Android 14+ does not allow a
+    // camera/microphone foreground service to be created after the app is
+    // already in the background.
+    void backgroundCall.start().catch(error => {
+      console.warn('Background call service start failed', error);
+    });
 
     const handleConnected = () => setStatus('В звонке');
     const handleReconnected = () => {
@@ -224,6 +225,9 @@ export function CallScreen({route, navigation}: Props) {
         .off(RoomEvent.Reconnecting, handleReconnecting)
         .off(RoomEvent.SignalReconnecting, handleReconnecting)
         .off(RoomEvent.Disconnected, handleDisconnected);
+      void backgroundCall.stop().catch(error => {
+        console.warn('Background call service stop failed', error);
+      });
       void AudioSession.stopAudioSession();
     };
   }, [recoverConnection, restoreLocalMedia, room]);
