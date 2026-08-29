@@ -1,1 +1,1 @@
-export const config = {apiBaseUrl: 'https://your-systemcall.example'} as const;
+export const config = {apiBaseUrl: 'https://systemcall.suetovlabs.ru'} as const;
