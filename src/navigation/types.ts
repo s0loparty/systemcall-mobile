@@ -7,5 +7,6 @@ export type RootStackParamList = {
     livekit: LiveKitCredentials;
     cameraEnabled: boolean;
     microphoneEnabled: boolean;
+    cameraFacingMode: 'user' | 'environment';
   };
 };
