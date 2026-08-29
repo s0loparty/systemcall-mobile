@@ -33,11 +33,12 @@ export function HomeScreen({navigation}: Props) {
     try {
       setLoading(true);
       const room = await getRoom(id);
-      if (room.waiting_room_enabled) {
-        setError('Комнаты с залом ожидания пока не поддерживаются в MVP.');
-        return;
-      }
-      navigation.navigate('PreJoin', {publicId: id, roomName: room.name});
+      navigation.navigate('PreJoin', {
+        publicId: id,
+        roomName: room.name,
+        hasPassword: room.has_password === true,
+        waitingRoomEnabled: room.waiting_room_enabled === true,
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось открыть комнату.');
     } finally {
