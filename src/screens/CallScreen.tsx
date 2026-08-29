@@ -37,6 +37,7 @@ import type {RootStackParamList} from '../navigation/types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Call'>;
 type FacingMode = 'user' | 'environment';
+type TimerHandle = ReturnType<typeof setTimeout>;
 
 type CallStatus =
   | 'Подключение…'
@@ -61,13 +62,32 @@ export function CallScreen({route, navigation}: Props) {
   const [cameraFacingMode, setCameraFacingMode] = useState<FacingMode>(
     route.params.cameraFacingMode,
   );
+
   const desiredMicrophoneRef = useRef(route.params.microphoneEnabled);
   const desiredCameraRef = useRef(route.params.cameraEnabled);
   const cameraFacingModeRef = useRef<FacingMode>(route.params.cameraFacingMode);
   const appState = useRef<AppStateStatus>(AppState.currentState);
   const reconnecting = useRef(false);
   const restoringMedia = useRef(false);
+  const leaving = useRef(false);
   const lastForcedCameraRecoveryAt = useRef(0);
+  const timers = useRef<TimerHandle[]>([]);
+
+  const schedule = useCallback((callback: () => void, delay: number) => {
+    const timer = setTimeout(() => {
+      timers.current = timers.current.filter(item => item !== timer);
+      if (!leaving.current) {
+        callback();
+      }
+    }, delay);
+    timers.current.push(timer);
+    return timer;
+  }, []);
+
+  const clearScheduledWork = useCallback(() => {
+    timers.current.forEach(clearTimeout);
+    timers.current = [];
+  }, []);
 
   const getCameraTrack = useCallback(() => {
     const publication = room.localParticipant.getTrackPublication(
@@ -77,6 +97,9 @@ export function CallScreen({route, navigation}: Props) {
   }, [room]);
 
   const applyCameraFacingMode = useCallback(async () => {
+    if (leaving.current) {
+      return;
+    }
     const track = getCameraTrack();
     if (track) {
       await track.restartTrack({facingMode: cameraFacingModeRef.current});
@@ -85,6 +108,10 @@ export function CallScreen({route, navigation}: Props) {
 
   const restoreCamera = useCallback(
     async (forceRecreate = false) => {
+      if (leaving.current) {
+        return;
+      }
+
       if (!desiredCameraRef.current) {
         await room.localParticipant.setCameraEnabled(false);
         return;
@@ -99,6 +126,9 @@ export function CallScreen({route, navigation}: Props) {
 
         await room.localParticipant.setCameraEnabled(false);
         await wait(250);
+        if (leaving.current) {
+          return;
+        }
         await room.localParticipant.setCameraEnabled(true, {
           facingMode: cameraFacingModeRef.current,
         });
@@ -115,7 +145,11 @@ export function CallScreen({route, navigation}: Props) {
 
   const restoreLocalMedia = useCallback(
     async (forceCameraRecreate = false) => {
-      if (restoringMedia.current || room.state !== ConnectionState.Connected) {
+      if (
+        leaving.current ||
+        restoringMedia.current ||
+        room.state !== ConnectionState.Connected
+      ) {
         return;
       }
 
@@ -124,9 +158,13 @@ export function CallScreen({route, navigation}: Props) {
         await room.localParticipant.setMicrophoneEnabled(
           desiredMicrophoneRef.current,
         );
-        await restoreCamera(forceCameraRecreate);
+        if (!leaving.current) {
+          await restoreCamera(forceCameraRecreate);
+        }
       } catch (error) {
-        console.warn('LiveKit local media restore failed', error);
+        if (!leaving.current) {
+          console.warn('LiveKit local media restore failed', error);
+        }
       } finally {
         restoringMedia.current = false;
       }
@@ -135,7 +173,7 @@ export function CallScreen({route, navigation}: Props) {
   );
 
   const recoverConnection = useCallback(async () => {
-    if (reconnecting.current) {
+    if (leaving.current || reconnecting.current) {
       return;
     }
 
@@ -149,7 +187,7 @@ export function CallScreen({route, navigation}: Props) {
 
     if (room.state === ConnectionState.Connected) {
       await wait(1200);
-      if (room.state === ConnectionState.Connected) {
+      if (!leaving.current && room.state === ConnectionState.Connected) {
         await restoreLocalMedia(true);
       }
       return;
@@ -165,11 +203,15 @@ export function CallScreen({route, navigation}: Props) {
     try {
       await room.connect(route.params.livekit.url, route.params.livekit.token);
       await wait(700);
-      await restoreLocalMedia(true);
-      setStatus('В звонке');
+      if (!leaving.current) {
+        await restoreLocalMedia(true);
+        setStatus('В звонке');
+      }
     } catch (error) {
-      console.warn('LiveKit foreground reconnect failed', error);
-      setStatus('Соединение потеряно');
+      if (!leaving.current) {
+        console.warn('LiveKit foreground reconnect failed', error);
+        setStatus('Соединение потеряно');
+      }
     } finally {
       reconnecting.current = false;
     }
@@ -180,6 +222,34 @@ export function CallScreen({route, navigation}: Props) {
     route.params.livekit.url,
   ]);
 
+  const leaveCall = useCallback(async () => {
+    if (leaving.current) {
+      return;
+    }
+
+    leaving.current = true;
+    clearScheduledWork();
+
+    try {
+      await backgroundCall.stop();
+    } catch (error) {
+      console.warn('Background call service stop failed', error);
+    }
+
+    try {
+      if (room.state !== ConnectionState.Disconnected) {
+        await room.disconnect(true);
+      }
+    } catch (error) {
+      // During teardown the signal websocket may already be gone. The user is
+      // leaving intentionally, so this should not block navigation or surface a
+      // red error from our own code.
+      console.warn('LiveKit graceful disconnect failed', error);
+    }
+
+    navigation.popToTop();
+  }, [clearScheduledWork, navigation, room]);
+
   useEffect(() => {
     void AudioSession.startAudioSession();
 
@@ -187,13 +257,28 @@ export function CallScreen({route, navigation}: Props) {
       console.warn('Background call service start failed', error);
     });
 
-    const handleConnected = () => setStatus('В звонке');
-    const handleReconnected = () => {
-      setStatus('В звонке');
-      setTimeout(() => void restoreLocalMedia(true), 900);
+    const handleConnected = () => {
+      if (!leaving.current) {
+        setStatus('В звонке');
+      }
     };
-    const handleReconnecting = () => setStatus('Переподключение…');
-    const handleDisconnected = () => setStatus('Соединение потеряно');
+    const handleReconnected = () => {
+      if (leaving.current) {
+        return;
+      }
+      setStatus('В звонке');
+      schedule(() => void restoreLocalMedia(true), 900);
+    };
+    const handleReconnecting = () => {
+      if (!leaving.current) {
+        setStatus('Переподключение…');
+      }
+    };
+    const handleDisconnected = () => {
+      if (!leaving.current) {
+        setStatus('Соединение потеряно');
+      }
+    };
 
     room
       .on(RoomEvent.Connected, handleConnected)
@@ -207,14 +292,17 @@ export function CallScreen({route, navigation}: Props) {
       appState.current = nextState;
 
       if (
+        !leaving.current &&
         nextState === 'active' &&
         (previousState === 'background' || previousState === 'inactive')
       ) {
-        setTimeout(() => void recoverConnection(), 500);
+        schedule(() => void recoverConnection(), 500);
       }
     });
 
     return () => {
+      leaving.current = true;
+      clearScheduledWork();
       subscription.remove();
       room
         .off(RoomEvent.Connected, handleConnected)
@@ -227,10 +315,13 @@ export function CallScreen({route, navigation}: Props) {
       });
       void AudioSession.stopAudioSession();
     };
-  }, [recoverConnection, restoreLocalMedia, room]);
+  }, [clearScheduledWork, recoverConnection, restoreLocalMedia, room, schedule]);
 
   const changeMicrophone = useCallback(
     async (enabled: boolean) => {
+      if (leaving.current) {
+        return;
+      }
       desiredMicrophoneRef.current = enabled;
       setDesiredMicrophoneEnabled(enabled);
       try {
@@ -244,6 +335,9 @@ export function CallScreen({route, navigation}: Props) {
 
   const changeCamera = useCallback(
     async (enabled: boolean) => {
+      if (leaving.current) {
+        return;
+      }
       desiredCameraRef.current = enabled;
       setDesiredCameraEnabled(enabled);
       try {
@@ -260,6 +354,9 @@ export function CallScreen({route, navigation}: Props) {
   );
 
   const switchCamera = useCallback(async () => {
+    if (leaving.current) {
+      return;
+    }
     const next: FacingMode =
       cameraFacingModeRef.current === 'user' ? 'environment' : 'user';
     cameraFacingModeRef.current = next;
@@ -284,9 +381,21 @@ export function CallScreen({route, navigation}: Props) {
       connect
       audio={route.params.microphoneEnabled}
       video={route.params.cameraEnabled}
-      onConnected={() => setStatus('В звонке')}
-      onDisconnected={() => setStatus('Соединение потеряно')}
-      onError={error => console.warn('LiveKit room error', error)}>
+      onConnected={() => {
+        if (!leaving.current) {
+          setStatus('В звонке');
+        }
+      }}
+      onDisconnected={() => {
+        if (!leaving.current) {
+          setStatus('Соединение потеряно');
+        }
+      }}
+      onError={error => {
+        if (!leaving.current) {
+          console.warn('LiveKit room error', error);
+        }
+      }}>
       <Content
         roomName={route.params.roomName}
         status={status}
@@ -296,7 +405,7 @@ export function CallScreen({route, navigation}: Props) {
         onMicrophoneChange={changeMicrophone}
         onCameraChange={changeCamera}
         onSwitchCamera={switchCamera}
-        onLeave={() => navigation.popToTop()}
+        onLeave={() => void leaveCall()}
       />
     </LiveKitRoom>
   );
