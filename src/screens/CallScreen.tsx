@@ -1,8 +1,9 @@
-import React from 'react';
+import React, {useEffect} from 'react';
 import type {NativeStackScreenProps} from '@react-navigation/native-stack';
 import {RoomContext} from '@livekit/react-native';
 import {CallScreenContent} from '../components/call/CallScreenContent';
 import {useCallLifecycle} from '../hooks/useCallLifecycle';
+import {pip} from '../native/pip';
 import type {RootStackParamList} from '../navigation/types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Call'>;
@@ -19,6 +20,13 @@ export function CallScreen({route, navigation}: Props) {
     switchCamera,
     leaveCall,
   } = useCallLifecycle(route.params, () => navigation.popToTop());
+
+  useEffect(() => {
+    pip.setCallScreenActive(true);
+    return () => {
+      pip.setCallScreenActive(false);
+    };
+  }, []);
 
   return (
     <RoomContext.Provider value={room}>
