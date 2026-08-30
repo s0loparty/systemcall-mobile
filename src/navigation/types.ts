@@ -2,6 +2,7 @@ import type {LiveKitCredentials} from '../types/api';
 
 export type RootStackParamList = {
   Home: undefined;
+  Settings: undefined;
   PreJoin: {
     publicId: string;
     roomName: string;
