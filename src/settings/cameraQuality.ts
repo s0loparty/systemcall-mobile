@@ -21,37 +21,37 @@ export const CAMERA_QUALITY_PRESETS: readonly CameraQualityPreset[] = [
   {
     id: 'medium',
     label: 'Среднее',
-    description: '480p · 15 FPS',
+    description: '480p · 30 FPS',
     width: 854,
     height: 480,
-    frameRate: 15,
+    frameRate: 30,
   },
   {
     id: 'high',
     label: 'Высокое',
-    description: '720p · 15 FPS',
+    description: '720p · 30 FPS · рекомендуется',
     width: 1280,
     height: 720,
-    frameRate: 15,
+    frameRate: 30,
   },
   {
     id: 'highest',
     label: 'Наивысшее',
-    description: '1080p · 30 FPS',
+    description: '1080p · 30 FPS · высокая нагрузка',
     width: 1920,
     height: 1080,
     frameRate: 30,
   },
 ] as const;
 
-export const DEFAULT_CAMERA_QUALITY_PRESET_ID: CameraQualityPresetId = 'medium';
+export const DEFAULT_CAMERA_QUALITY_PRESET_ID: CameraQualityPresetId = 'high';
 
 export function getCameraQualityPreset(
   id: CameraQualityPresetId,
 ): CameraQualityPreset {
   return (
     CAMERA_QUALITY_PRESETS.find(preset => preset.id === id) ??
-    CAMERA_QUALITY_PRESETS[1]
+    CAMERA_QUALITY_PRESETS[2]
   );
 }
 
