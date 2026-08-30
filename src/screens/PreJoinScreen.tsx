@@ -14,6 +14,7 @@ import type {NativeStackScreenProps} from '@react-navigation/native-stack';
 import {
   ArrowsRightLeftIcon,
   ArrowLeftIcon,
+  CheckIcon,
   MicrophoneIcon,
   VideoCameraIcon,
   VideoCameraSlashIcon,
@@ -25,29 +26,34 @@ import {MediaToggle} from '../components/call/MediaToggle';
 import {LocalPreview} from '../components/call/LocalPreview';
 import {PrimaryButton} from '../components/PrimaryButton';
 import {joinRoom} from '../api/rooms';
+import {useCameraSettings} from '../settings/CameraSettingsContext';
+import {getCameraCaptureOptions} from '../settings/cameraQuality';
 import type {RootStackParamList} from '../navigation/types';
+import {setBackgroundBlur} from '../utils/backgroundBlur';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'PreJoin'>;
 type AndroidPermission =
   (typeof PermissionsAndroid.PERMISSIONS)[keyof typeof PermissionsAndroid.PERMISSIONS];
 
 export function PreJoinScreen({route, navigation}: Props) {
+  const {qualityPresetId} = useCameraSettings();
   const [camera, setCamera] = useState(true);
   const [mic, setMic] = useState(true);
+  const [backgroundBlur, setBackgroundBlurEnabled] = useState(false);
   const [name, setName] = useState('Гость');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [previewTrack, setPreviewTrack] = useState<LocalVideoTrack | null>(null);
+  const [previewTrack, setPreviewTrack] = useState<LocalVideoTrack | null>(
+    null,
+  );
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const previewTrackRef = useRef<LocalVideoTrack | null>(null);
+  const backgroundBlurRef = useRef(backgroundBlur);
 
   const requestAndroidPermission = useCallback(
     async (permission: AndroidPermission) => {
-      if (Platform.OS !== 'android') {
-        return true;
-      }
-
+      if (Platform.OS !== 'android') return true;
       const granted = await PermissionsAndroid.request(permission);
       return granted === PermissionsAndroid.RESULTS.GRANTED;
     },
@@ -58,12 +64,10 @@ export function PreJoinScreen({route, navigation}: Props) {
     const granted = await requestAndroidPermission(
       PermissionsAndroid.PERMISSIONS.CAMERA,
     );
-
     if (!granted) {
       setCamera(false);
       setError('Разрешите доступ к камере.');
     }
-
     return granted;
   }, [requestAndroidPermission]);
 
@@ -71,12 +75,10 @@ export function PreJoinScreen({route, navigation}: Props) {
     const granted = await requestAndroidPermission(
       PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
     );
-
     if (!granted) {
       setMic(false);
       setError('Разрешите доступ к микрофону.');
     }
-
     return granted;
   }, [requestAndroidPermission]);
 
@@ -89,22 +91,34 @@ export function PreJoinScreen({route, navigation}: Props) {
   const startPreview = useCallback(
     async (nextFacingMode: 'user' | 'environment') => {
       try {
-        if (!(await ensureCameraPermission())) {
-          return;
-        }
-
+        if (!(await ensureCameraPermission())) return;
         stopPreview();
-        const track = await createLocalVideoTrack({facingMode: nextFacingMode});
+        const track = await createLocalVideoTrack(
+          getCameraCaptureOptions(qualityPresetId, nextFacingMode),
+        );
+        if (backgroundBlurRef.current) {
+          try {
+            setBackgroundBlur(track, true);
+          } catch (e) {
+            backgroundBlurRef.current = false;
+            setBackgroundBlurEnabled(false);
+            setError(
+              e instanceof Error
+                ? e.message
+                : 'Не удалось включить размытие фона.',
+            );
+          }
+        }
         previewTrackRef.current = track;
         setPreviewTrack(track);
-        setError(null);
+        if (!backgroundBlurRef.current) setError(null);
       } catch (e) {
         console.warn('PreJoin camera preview failed', e);
         setCamera(false);
         setError('Не удалось запустить камеру.');
       }
     },
-    [ensureCameraPermission, stopPreview],
+    [ensureCameraPermission, qualityPresetId, stopPreview],
   );
 
   useEffect(() => {
@@ -118,7 +132,6 @@ export function PreJoinScreen({route, navigation}: Props) {
       stopPreview();
       return;
     }
-
     setCamera(true);
     void startPreview(facingMode);
   }, [camera, facingMode, startPreview, stopPreview]);
@@ -128,19 +141,30 @@ export function PreJoinScreen({route, navigation}: Props) {
       setMic(false);
       return;
     }
-
     if (await ensureMicrophonePermission()) {
       setMic(true);
       setError(null);
     }
   }, [ensureMicrophonePermission, mic]);
 
+  const toggleBackgroundBlur = useCallback(() => {
+    const enabled = !backgroundBlur;
+    try {
+      setBackgroundBlur(previewTrackRef.current, enabled);
+      backgroundBlurRef.current = enabled;
+      setBackgroundBlurEnabled(enabled);
+      setError(null);
+    } catch (e) {
+      setError(
+        e instanceof Error ? e.message : 'Не удалось включить размытие фона.',
+      );
+    }
+  }, [backgroundBlur]);
+
   const switchCamera = useCallback(async () => {
     const next = facingMode === 'user' ? 'environment' : 'user';
     setFacingMode(next);
-    if (camera) {
-      await startPreview(next);
-    }
+    if (camera) await startPreview(next);
   }, [camera, facingMode, startPreview]);
 
   async function join() {
@@ -148,7 +172,6 @@ export function PreJoinScreen({route, navigation}: Props) {
       setError('Введите имя.');
       return;
     }
-
     if (route.params.hasPassword && !password) {
       setError('Введите пароль комнаты.');
       return;
@@ -157,14 +180,8 @@ export function PreJoinScreen({route, navigation}: Props) {
     try {
       setLoading(true);
       setError(null);
-
-      if (camera && !(await ensureCameraPermission())) {
-        return;
-      }
-
-      if (mic && !(await ensureMicrophonePermission())) {
-        return;
-      }
+      if (camera && !(await ensureCameraPermission())) return;
+      if (mic && !(await ensureMicrophonePermission())) return;
 
       const r = await joinRoom(
         route.params.publicId,
@@ -181,6 +198,8 @@ export function PreJoinScreen({route, navigation}: Props) {
           cameraEnabled: camera,
           microphoneEnabled: mic,
           cameraFacingMode: facingMode,
+          cameraQualityPresetId: qualityPresetId,
+          backgroundBlurEnabled: backgroundBlur,
         });
         return;
       }
@@ -191,6 +210,8 @@ export function PreJoinScreen({route, navigation}: Props) {
         cameraEnabled: camera,
         microphoneEnabled: mic,
         cameraFacingMode: facingMode,
+        cameraQualityPresetId: qualityPresetId,
+        backgroundBlurEnabled: backgroundBlur,
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось войти.');
@@ -247,6 +268,23 @@ export function PreJoinScreen({route, navigation}: Props) {
                 autoCorrect={false}
               />
             ) : null}
+            <Pressable
+              accessibilityRole="checkbox"
+              accessibilityState={{checked: backgroundBlur}}
+              onPress={toggleBackgroundBlur}
+              style={s.blurOption}>
+              <View style={[s.checkbox, backgroundBlur && s.checkboxChecked]}>
+                {backgroundBlur ? (
+                  <CheckIcon size={14} color="#0b0b0b" />
+                ) : null}
+              </View>
+              <View style={s.blurCopy}>
+                <Text style={s.blurTitle}>Размыть фон</Text>
+                <Text style={s.blurHint}>
+                  Эффект виден в превью и участникам звонка
+                </Text>
+              </View>
+            </Pressable>
             {error ? <Text style={s.error}>{error}</Text> : null}
             <View style={s.controls}>
               <MediaToggle
@@ -292,14 +330,8 @@ export function PreJoinScreen({route, navigation}: Props) {
 
 const s = StyleSheet.create({
   safe: {flex: 1, backgroundColor: '#0b0b0b'},
-  container: {
-    flexGrow: 1,
-    gap: 16,
-    padding: 16,
-  },
-  header: {
-    gap: 14,
-  },
+  container: {flexGrow: 1, gap: 16, padding: 16},
+  header: {gap: 14},
   backButton: {
     alignSelf: 'flex-start',
     flexDirection: 'row',
@@ -307,21 +339,36 @@ const s = StyleSheet.create({
     gap: 6,
     paddingVertical: 4,
   },
-  backLabel: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
+  backLabel: {color: '#fff', fontSize: 14, fontWeight: '600'},
   title: {color: '#fff', fontSize: 22, fontWeight: '800'},
   sub: {color: '#8b8b8b'},
-  preview: {
-    flex: 1,
-    minHeight: 260,
-  },
-  form: {
+  preview: {flex: 1, minHeight: 260},
+  form: {gap: 12, paddingBottom: 8},
+  blurOption: {
+    minHeight: 58,
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 12,
-    paddingBottom: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#292929',
+    backgroundColor: '#151515',
   },
+  checkbox: {
+    width: 22,
+    height: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#555',
+  },
+  checkboxChecked: {backgroundColor: '#fff', borderColor: '#fff'},
+  blurCopy: {flex: 1, gap: 2},
+  blurTitle: {color: '#fff', fontSize: 15, fontWeight: '700'},
+  blurHint: {color: '#777', fontSize: 12, lineHeight: 16},
   error: {color: '#ff7373'},
   controls: {flexDirection: 'row', justifyContent: 'center', gap: 8},
 });

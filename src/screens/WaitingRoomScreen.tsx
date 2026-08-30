@@ -39,10 +39,7 @@ export function WaitingRoomScreen({route, navigation}: Props) {
           return;
         }
 
-        if (
-          result.waiting_room.status === 'approved' &&
-          result.livekit
-        ) {
+        if (result.waiting_room.status === 'approved' && result.livekit) {
           finished.current = true;
           navigation.replace('Call', {
             roomName: result.room.name,
@@ -50,6 +47,8 @@ export function WaitingRoomScreen({route, navigation}: Props) {
             cameraEnabled: route.params.cameraEnabled,
             microphoneEnabled: route.params.microphoneEnabled,
             cameraFacingMode: route.params.cameraFacingMode,
+            cameraQualityPresetId: route.params.cameraQualityPresetId,
+            backgroundBlurEnabled: route.params.backgroundBlurEnabled,
           });
           return;
         }
@@ -86,7 +85,8 @@ export function WaitingRoomScreen({route, navigation}: Props) {
           <Text style={s.message}>{message}</Text>
           {!rejected ? (
             <Text style={s.hint}>
-              Оставьте этот экран открытым. После подтверждения вы автоматически войдёте в звонок.
+              Оставьте этот экран открытым. После подтверждения вы автоматически
+              войдёте в звонок.
             </Text>
           ) : null}
         </View>
@@ -106,5 +106,11 @@ const s = StyleSheet.create({
   content: {flex: 1, alignItems: 'center', justifyContent: 'center', gap: 16},
   title: {color: '#fff', fontSize: 26, fontWeight: '800', textAlign: 'center'},
   message: {color: '#d0d0d0', fontSize: 17, textAlign: 'center'},
-  hint: {color: '#777', fontSize: 14, lineHeight: 20, textAlign: 'center', maxWidth: 320},
+  hint: {
+    color: '#777',
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'center',
+    maxWidth: 320,
+  },
 });
