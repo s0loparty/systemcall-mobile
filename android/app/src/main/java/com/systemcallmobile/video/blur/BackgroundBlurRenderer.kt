@@ -21,16 +21,11 @@ import java.util.concurrent.atomic.AtomicBoolean
 class BackgroundBlurRenderer(
     private val appContext: Context,
 ) {
-    private val frameDrawer = VideoFrameDrawer()
-    private val inputDrawer = GlRectDrawer()
-    private val yuvConverter = YuvConverter()
-    private val sourceBuffer = GlTextureFrameBuffer(GLES20.GL_RGBA)
-    private val horizontalBlurBuffer = GlTextureFrameBuffer(GLES20.GL_RGBA)
-    private val verticalBlurBuffer = GlTextureFrameBuffer(GLES20.GL_RGBA)
-    private val outputSlots = List(OUTPUT_POOL_SIZE) { OutputTextureSlot() }
-    private val blurProgram = FullscreenProgram(BLUR_FRAGMENT_SHADER)
-    private val compositeProgram = FullscreenProgram(COMPOSITE_FRAGMENT_SHADER)
-    private val textureMatrix = Matrix()
+    // IMPORTANT: Do not create any GL-backed resources in this object's constructor.
+    // Video effect processors are built by react-native-webrtc on a worker pool that
+    // does not own the camera EGL context. GL resources are initialized lazily from
+    // render(), when the first captured frame is actually processed.
+    private var resources: GlResources? = null
     private var maskTextureId = 0
     private var uploadedMaskVersion = -1L
     private var currentWidth = 0
@@ -41,36 +36,39 @@ class BackgroundBlurRenderer(
         mask: SegmentationMask,
         textureHelper: SurfaceTextureHelper,
     ): VideoFrame? {
+        val gl = getOrCreateResources()
         val width = frame.rotatedWidth
         val height = frame.rotatedHeight
-        ensureSize(width, height)
+        ensureSize(gl, width, height)
         uploadMask(mask)
 
-        val outputSlot = acquireOutputSlot() ?: return null
+        val outputSlot = acquireOutputSlot(gl) ?: return null
 
         return try {
-            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, sourceBuffer.frameBufferId)
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, gl.sourceBuffer.frameBufferId)
             GLES20.glViewport(0, 0, width, height)
             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
-            frameDrawer.drawFrame(frame, inputDrawer, textureMatrix, 0, 0, width, height)
+            gl.frameDrawer.drawFrame(frame, gl.inputDrawer, gl.textureMatrix, 0, 0, width, height)
 
             drawBlurPass(
-                sourceTextureId = sourceBuffer.textureId,
-                targetFrameBufferId = horizontalBlurBuffer.frameBufferId,
+                gl = gl,
+                sourceTextureId = gl.sourceBuffer.textureId,
+                targetFrameBufferId = gl.horizontalBlurBuffer.frameBufferId,
                 width = width,
                 height = height,
                 stepX = 1f / width.toFloat(),
                 stepY = 0f,
             )
             drawBlurPass(
-                sourceTextureId = horizontalBlurBuffer.textureId,
-                targetFrameBufferId = verticalBlurBuffer.frameBufferId,
+                gl = gl,
+                sourceTextureId = gl.horizontalBlurBuffer.textureId,
+                targetFrameBufferId = gl.verticalBlurBuffer.frameBufferId,
                 width = width,
                 height = height,
                 stepX = 0f,
                 stepY = 1f / height.toFloat(),
             )
-            drawComposite(outputSlot.buffer.frameBufferId, width, height)
+            drawComposite(gl, outputSlot.buffer.frameBufferId, width, height)
 
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
             GlUtil.checkNoGLES2Error("BackgroundBlurRenderer.render")
@@ -82,50 +80,65 @@ class BackgroundBlurRenderer(
                 outputSlot.buffer.textureId,
                 Matrix(),
                 textureHelper.handler,
-                yuvConverter,
+                gl.yuvConverter,
             ) {
+                // The slot cannot be rendered into again while WebRTC still owns
+                // this texture-backed frame. TextureBufferImpl invokes this callback
+                // only after its refcount reaches zero.
                 outputSlot.release()
             }
 
-            // Keep the processed frame as a GPU texture. Converting the texture
-            // back to I420 here forces a GPU readback/synchronization on every
-            // camera frame and defeats most of the benefit of the GL pipeline.
             VideoFrame(textureBuffer, 0, frame.timestampNs)
         } catch (error: Throwable) {
             outputSlot.release()
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
             throw error
         }
     }
 
     fun release() {
+        val gl = resources ?: return
+
         if (maskTextureId != 0) {
             GLES20.glDeleteTextures(1, intArrayOf(maskTextureId), 0)
             maskTextureId = 0
         }
-        sourceBuffer.release()
-        horizontalBlurBuffer.release()
-        verticalBlurBuffer.release()
-        outputSlots.forEach { it.buffer.release() }
-        blurProgram.release()
-        compositeProgram.release()
-        inputDrawer.release()
-        frameDrawer.release()
-        yuvConverter.release()
+        gl.release()
+        resources = null
+        uploadedMaskVersion = -1L
+        currentWidth = 0
+        currentHeight = 0
     }
 
-    private fun ensureSize(width: Int, height: Int) {
+    private fun getOrCreateResources(): GlResources {
+        resources?.let { return it }
+
+        GlUtil.checkNoGLES2Error("BackgroundBlurRenderer.beforeInit")
+        return GlResources().also {
+            resources = it
+            GlUtil.checkNoGLES2Error("BackgroundBlurRenderer.afterInit")
+        }
+    }
+
+    private fun ensureSize(gl: GlResources, width: Int, height: Int) {
         if (width == currentWidth && height == currentHeight) return
 
-        sourceBuffer.setSize(width, height)
-        horizontalBlurBuffer.setSize(width, height)
-        verticalBlurBuffer.setSize(width, height)
-        outputSlots.forEach { it.buffer.setSize(width, height) }
+        // Never resize a framebuffer whose texture can still be referenced by a
+        // downstream WebRTC sink. Resolution changes are rare, and the processor
+        // is expected to be recreated around capture changes. If a slot is busy,
+        // skip this frame instead of mutating an in-use texture.
+        if (gl.outputSlots.any { it.isInUse() }) return
+
+        gl.sourceBuffer.setSize(width, height)
+        gl.horizontalBlurBuffer.setSize(width, height)
+        gl.verticalBlurBuffer.setSize(width, height)
+        gl.outputSlots.forEach { it.buffer.setSize(width, height) }
         currentWidth = width
         currentHeight = height
     }
 
-    private fun acquireOutputSlot(): OutputTextureSlot? {
-        for (slot in outputSlots) {
+    private fun acquireOutputSlot(gl: GlResources): OutputTextureSlot? {
+        for (slot in gl.outputSlots) {
             if (slot.tryAcquire()) return slot
         }
         return null
@@ -164,6 +177,7 @@ class BackgroundBlurRenderer(
     }
 
     private fun drawBlurPass(
+        gl: GlResources,
         sourceTextureId: Int,
         targetFrameBufferId: Int,
         width: Int,
@@ -173,31 +187,63 @@ class BackgroundBlurRenderer(
     ) {
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, targetFrameBufferId)
         GLES20.glViewport(0, 0, width, height)
-        blurProgram.use()
-        blurProgram.setTexture("uTexture", 0, sourceTextureId)
-        GLES20.glUniform2f(blurProgram.uniform("uTexelStep"), stepX, stepY)
-        blurProgram.draw()
+        gl.blurProgram.use()
+        gl.blurProgram.setTexture("uTexture", 0, sourceTextureId)
+        GLES20.glUniform2f(gl.blurProgram.uniform("uTexelStep"), stepX, stepY)
+        gl.blurProgram.draw()
     }
 
-    private fun drawComposite(targetFrameBufferId: Int, width: Int, height: Int) {
+    private fun drawComposite(
+        gl: GlResources,
+        targetFrameBufferId: Int,
+        width: Int,
+        height: Int,
+    ) {
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, targetFrameBufferId)
         GLES20.glViewport(0, 0, width, height)
-        compositeProgram.use()
-        compositeProgram.setTexture("uOriginalTexture", 0, sourceBuffer.textureId)
-        compositeProgram.setTexture("uBlurredTexture", 1, verticalBlurBuffer.textureId)
-        compositeProgram.setTexture("uMaskTexture", 2, maskTextureId)
-        compositeProgram.draw()
+        gl.compositeProgram.use()
+        gl.compositeProgram.setTexture("uOriginalTexture", 0, gl.sourceBuffer.textureId)
+        gl.compositeProgram.setTexture("uBlurredTexture", 1, gl.verticalBlurBuffer.textureId)
+        gl.compositeProgram.setTexture("uMaskTexture", 2, maskTextureId)
+        gl.compositeProgram.draw()
     }
 
     @Suppress("unused")
     private fun supportsGpuBlur(): Boolean =
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && appContext.packageName.isNotBlank()
 
+    private class GlResources {
+        val frameDrawer = VideoFrameDrawer()
+        val inputDrawer = GlRectDrawer()
+        val yuvConverter = YuvConverter()
+        val sourceBuffer = GlTextureFrameBuffer(GLES20.GL_RGBA)
+        val horizontalBlurBuffer = GlTextureFrameBuffer(GLES20.GL_RGBA)
+        val verticalBlurBuffer = GlTextureFrameBuffer(GLES20.GL_RGBA)
+        val outputSlots = List(OUTPUT_POOL_SIZE) { OutputTextureSlot() }
+        val blurProgram = FullscreenProgram(BLUR_FRAGMENT_SHADER)
+        val compositeProgram = FullscreenProgram(COMPOSITE_FRAGMENT_SHADER)
+        val textureMatrix = Matrix()
+
+        fun release() {
+            sourceBuffer.release()
+            horizontalBlurBuffer.release()
+            verticalBlurBuffer.release()
+            outputSlots.forEach { it.buffer.release() }
+            blurProgram.release()
+            compositeProgram.release()
+            inputDrawer.release()
+            frameDrawer.release()
+            yuvConverter.release()
+        }
+    }
+
     private class OutputTextureSlot {
         val buffer = GlTextureFrameBuffer(GLES20.GL_RGBA)
         private val inUse = AtomicBoolean(false)
 
         fun tryAcquire(): Boolean = inUse.compareAndSet(false, true)
+
+        fun isInUse(): Boolean = inUse.get()
 
         fun release() {
             inUse.set(false)
