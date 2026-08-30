@@ -11,7 +11,9 @@ import com.facebook.react.defaults.DefaultReactHost.getDefaultReactHost
 import com.facebook.react.defaults.DefaultReactNativeHost
 import com.livekit.reactnative.LiveKitReactNative
 import com.livekit.reactnative.audio.AudioType
+import com.oney.WebRTCModule.videoEffects.ProcessorProvider
 import com.systemcallmobile.call.BackgroundCallPackage
+import com.systemcallmobile.video.blur.BackgroundBlurProcessorFactory
 
 class MainApplication : Application(), ReactApplication {
     override val reactNativeHost: ReactNativeHost =
@@ -33,6 +35,10 @@ class MainApplication : Application(), ReactApplication {
     override fun onCreate() {
         super.onCreate()
         LiveKitReactNative.setup(this, AudioType.CommunicationAudioType())
+        ProcessorProvider.addProcessor(
+            "systemcall-background-blur",
+            BackgroundBlurProcessorFactory(this),
+        )
         loadReactNative(this)
     }
 }

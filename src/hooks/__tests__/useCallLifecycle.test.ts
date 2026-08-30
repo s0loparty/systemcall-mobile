@@ -15,10 +15,10 @@ jest.mock('@livekit/react-native', () => ({
   },
 }));
 
-const {
-  useCallLifecycle,
-} = require('../useCallLifecycle') as typeof import('../useCallLifecycle');
-type UseCallLifecycleResult = import('../useCallLifecycle').UseCallLifecycleResult;
+const {useCallLifecycle} =
+  require('../useCallLifecycle') as typeof import('../useCallLifecycle');
+type UseCallLifecycleResult =
+  import('../useCallLifecycle').UseCallLifecycleResult;
 
 type Listener = (...args: unknown[]) => void;
 
@@ -31,7 +31,9 @@ type FakeRoom = {
   connect: jest.Mock<Promise<void>, [string, string]>;
   disconnect: jest.Mock<Promise<void>, [boolean?]>;
   localParticipant: {
-    getTrackPublication: (source: Track.Source) => {track?: FakeTrack} | undefined;
+    getTrackPublication: (
+      source: Track.Source,
+    ) => {track?: FakeTrack} | undefined;
     setCameraEnabled: jest.Mock<Promise<void>, [boolean, unknown?]>;
     setMicrophoneEnabled: jest.Mock<Promise<void>, [boolean]>;
     republishAllTracks: jest.Mock<Promise<void>, [unknown?, boolean?]>;
@@ -53,6 +55,8 @@ const routeParams = {
   cameraEnabled: true,
   microphoneEnabled: true,
   cameraFacingMode: 'user' as const,
+  cameraQualityPresetId: 'medium' as const,
+  backgroundBlurEnabled: true,
 };
 
 function createFakeRoom(initialState: ConnectionState): FakeRoom {
@@ -107,7 +111,9 @@ function createFakeRoom(initialState: ConnectionState): FakeRoom {
 function createFakeAppState(
   initialState: 'active' | 'background' | 'inactive' = 'active',
 ) {
-  const listeners = new Set<(state: 'active' | 'background' | 'inactive') => void>();
+  const listeners = new Set<
+    (state: 'active' | 'background' | 'inactive') => void
+  >();
 
   return {
     currentState: initialState,
@@ -170,6 +176,7 @@ describe('useCallLifecycle', () => {
     };
     const logger = {setLevel: jest.fn()};
     const loggerFactory = jest.fn(() => logger);
+    const applyBackgroundBlur = jest.fn();
 
     function Harness() {
       latest = useCallLifecycle(routeParams, onLeaveComplete, {
@@ -179,6 +186,7 @@ describe('useCallLifecycle', () => {
         createRoom: () => room as never,
         loggerFactory: loggerFactory as never,
         wait: async () => undefined,
+        applyBackgroundBlur: applyBackgroundBlur as never,
       });
       return null;
     }
@@ -193,6 +201,7 @@ describe('useCallLifecycle', () => {
       logger,
       loggerFactory,
       onLeaveComplete,
+      applyBackgroundBlur,
     };
   }
 
@@ -222,9 +231,18 @@ describe('useCallLifecycle', () => {
     expect(room.localParticipant.setCameraEnabled).toHaveBeenCalledWith(false);
     expect(room.localParticipant.setCameraEnabled).toHaveBeenCalledWith(true, {
       facingMode: 'user',
+      resolution: {width: 854, height: 480, frameRate: 15},
     });
-    expect(room.localParticipant.setMicrophoneEnabled).toHaveBeenCalledWith(false);
-    expect(room.localParticipant.setMicrophoneEnabled).toHaveBeenCalledWith(true);
+    expect(deps.applyBackgroundBlur).toHaveBeenCalledWith(
+      expect.objectContaining({restartTrack: expect.any(Function)}),
+      true,
+    );
+    expect(room.localParticipant.setMicrophoneEnabled).toHaveBeenCalledWith(
+      false,
+    );
+    expect(room.localParticipant.setMicrophoneEnabled).toHaveBeenCalledWith(
+      true,
+    );
   });
 
   it('marks status reconnecting on foreground when room is reconnecting and does not start second connect', async () => {
@@ -282,7 +300,9 @@ describe('useCallLifecycle', () => {
     expect(deps.loggerFactory).toHaveBeenCalled();
     expect(deps.logger.setLevel).toHaveBeenCalledWith(LogLevel.silent);
     expect(room.localParticipant.setCameraEnabled).toHaveBeenCalledWith(false);
-    expect(room.localParticipant.setMicrophoneEnabled).toHaveBeenCalledWith(false);
+    expect(room.localParticipant.setMicrophoneEnabled).toHaveBeenCalledWith(
+      false,
+    );
     expect(room.disconnect).toHaveBeenCalledWith(true);
     expect(deps.onLeaveComplete).toHaveBeenCalled();
   });
@@ -309,5 +329,24 @@ describe('useCallLifecycle', () => {
       3,
       true,
     );
+  });
+
+  it('restarts camera with selected quality preset when switching facing mode', async () => {
+    const room = createFakeRoom(ConnectionState.Connected);
+    const appState = createFakeAppState();
+    const deps = renderHook({room, appState});
+    const cameraTrack = room.localParticipant.getTrackPublication(
+      Track.Source.Camera,
+    )?.track;
+
+    await act(async () => {
+      await latest?.switchCamera();
+    });
+
+    expect(cameraTrack?.restartTrack).toHaveBeenCalledWith({
+      facingMode: 'environment',
+      resolution: {width: 854, height: 480, frameRate: 15},
+    });
+    expect(deps.applyBackgroundBlur).toHaveBeenCalledWith(cameraTrack, true);
   });
 });
