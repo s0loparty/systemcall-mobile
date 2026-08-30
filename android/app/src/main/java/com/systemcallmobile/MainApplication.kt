@@ -14,6 +14,7 @@ import com.livekit.reactnative.audio.AudioType
 import com.oney.WebRTCModule.videoEffects.ProcessorProvider
 import com.systemcallmobile.call.BackgroundCallPackage
 import com.systemcallmobile.video.blur.BackgroundBlurProcessorFactory
+import com.systemcallmobile.video.diagnostics.FramePacingDiagnosticsProcessorFactory
 
 class MainApplication : Application(), ReactApplication {
     override val reactNativeHost: ReactNativeHost =
@@ -38,6 +39,10 @@ class MainApplication : Application(), ReactApplication {
         ProcessorProvider.addProcessor(
             "systemcall-background-blur",
             BackgroundBlurProcessorFactory(this),
+        )
+        ProcessorProvider.addProcessor(
+            "systemcall-frame-pacing-diagnostics",
+            FramePacingDiagnosticsProcessorFactory(),
         )
         loadReactNative(this)
     }
