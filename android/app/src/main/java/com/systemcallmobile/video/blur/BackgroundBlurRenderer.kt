@@ -22,15 +22,12 @@ import java.util.concurrent.atomic.AtomicBoolean
 class BackgroundBlurRenderer(
     private val appContext: Context,
 ) {
-    // IMPORTANT: Do not create any GL-backed resources in this object's constructor.
-    // Video effect processors are built by react-native-webrtc on a worker pool that
-    // does not own the camera EGL context. GL resources are initialized lazily from
-    // render(), when the first captured frame is actually processed.
     private var resources: GlResources? = null
     private var maskTextureId = 0
     private var uploadedMaskVersion = -1L
     private var currentWidth = 0
     private var currentHeight = 0
+    private var currentBlurDownsample = 0
     private var slotAcquireAttempts = 0
     private var slotAcquireMisses = 0
     private var maxBusySlots = 0
@@ -44,30 +41,32 @@ class BackgroundBlurRenderer(
         val gl = getOrCreateResources()
         val width = frame.rotatedWidth
         val height = frame.rotatedHeight
-        if (!ensureSize(gl, width, height)) return null
+        val blurDownsample = blurDownsample(width, height)
+        if (!ensureSize(gl, width, height, blurDownsample)) return null
         uploadMask(mask)
 
         val outputSlot = acquireOutputSlot(gl) ?: return null
-        val blurWidth = blurDimension(width)
-        val blurHeight = blurDimension(height)
+        val blurWidth = blurDimension(width, blurDownsample)
+        val blurHeight = blurDimension(height, blurDownsample)
+        val blurRadiusMultiplier = blurRadiusMultiplier(blurDownsample)
 
         return try {
-            // Keep a full-resolution copy for the foreground/person layer.
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, gl.sourceBuffer.frameBufferId)
             GLES20.glViewport(0, 0, width, height)
             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
             gl.frameDrawer.drawFrame(frame, gl.inputDrawer, gl.textureMatrix, 0, 0, width, height)
 
-            // Blur at half resolution. Besides reducing GPU work, the downsample makes
-            // the same compact Gaussian kernel visibly stronger after it is upscaled
-            // during the final composite.
+            // Keep the published/output frame at the selected camera resolution, but
+            // make the expensive blur passes progressively smaller as capture
+            // resolution grows. The radius is compensated so 360p/720p/1080p keep
+            // approximately the same visible blur strength.
             drawBlurPass(
                 gl = gl,
                 sourceTextureId = gl.sourceBuffer.textureId,
                 targetFrameBufferId = gl.horizontalBlurBuffer.frameBufferId,
                 width = blurWidth,
                 height = blurHeight,
-                stepX = BLUR_RADIUS_MULTIPLIER / blurWidth.toFloat(),
+                stepX = blurRadiusMultiplier / blurWidth.toFloat(),
                 stepY = 0f,
             )
             drawBlurPass(
@@ -77,7 +76,7 @@ class BackgroundBlurRenderer(
                 width = blurWidth,
                 height = blurHeight,
                 stepX = 0f,
-                stepY = BLUR_RADIUS_MULTIPLIER / blurHeight.toFloat(),
+                stepY = blurRadiusMultiplier / blurHeight.toFloat(),
             )
             drawComposite(gl, outputSlot.buffer.frameBufferId, width, height)
 
@@ -93,9 +92,6 @@ class BackgroundBlurRenderer(
                 textureHelper.handler,
                 gl.yuvConverter,
             ) {
-                // The slot cannot be rendered into again while WebRTC still owns
-                // this texture-backed frame. TextureBufferImpl invokes this callback
-                // only after its refcount reaches zero.
                 outputSlot.release()
             }
 
@@ -119,6 +115,7 @@ class BackgroundBlurRenderer(
         uploadedMaskVersion = -1L
         currentWidth = 0
         currentHeight = 0
+        currentBlurDownsample = 0
     }
 
     private fun getOrCreateResources(): GlResources {
@@ -131,26 +128,52 @@ class BackgroundBlurRenderer(
         }
     }
 
-    private fun ensureSize(gl: GlResources, width: Int, height: Int): Boolean {
-        if (width == currentWidth && height == currentHeight) return true
+    private fun ensureSize(
+        gl: GlResources,
+        width: Int,
+        height: Int,
+        blurDownsample: Int,
+    ): Boolean {
+        if (
+            width == currentWidth &&
+            height == currentHeight &&
+            blurDownsample == currentBlurDownsample
+        ) return true
 
-        // Never resize a framebuffer whose texture can still be referenced by a
-        // downstream WebRTC sink. Resolution changes are rare, so skip the frame
-        // instead of mutating an in-use output texture.
         if (gl.outputSlots.any { it.isInUse() }) return false
 
-        val blurWidth = blurDimension(width)
-        val blurHeight = blurDimension(height)
+        val blurWidth = blurDimension(width, blurDownsample)
+        val blurHeight = blurDimension(height, blurDownsample)
         gl.sourceBuffer.setSize(width, height)
         gl.horizontalBlurBuffer.setSize(blurWidth, blurHeight)
         gl.verticalBlurBuffer.setSize(blurWidth, blurHeight)
         gl.outputSlots.forEach { it.buffer.setSize(width, height) }
         currentWidth = width
         currentHeight = height
+        currentBlurDownsample = blurDownsample
+
+        Log.i(
+            TAG,
+            "BlurResolution: input=${width}x$height, blur=${blurWidth}x$blurHeight, " +
+                "downsample=${blurDownsample}x",
+        )
         return true
     }
 
-    private fun blurDimension(value: Int): Int = (value / BLUR_DOWNSAMPLE).coerceAtLeast(1)
+    private fun blurDownsample(width: Int, height: Int): Int {
+        val longestSide = maxOf(width, height)
+        return when {
+            longestSide >= 1_600 -> 4 // 1080p class
+            longestSide >= 1_000 -> 3 // 720p class
+            else -> 2 // 360p/480p class
+        }
+    }
+
+    private fun blurDimension(value: Int, downsample: Int): Int =
+        (value / downsample).coerceAtLeast(1)
+
+    private fun blurRadiusMultiplier(downsample: Int): Float =
+        BLUR_RADIUS_MULTIPLIER * BASE_BLUR_DOWNSAMPLE / downsample.toFloat()
 
     private fun acquireOutputSlot(gl: GlResources): OutputTextureSlot? {
         slotAcquireAttempts++
@@ -283,9 +306,7 @@ class BackgroundBlurRenderer(
         private val inUse = AtomicBoolean(false)
 
         fun tryAcquire(): Boolean = inUse.compareAndSet(false, true)
-
         fun isInUse(): Boolean = inUse.get()
-
         fun release() {
             inUse.set(false)
         }
@@ -295,14 +316,13 @@ class BackgroundBlurRenderer(
         private const val TAG = "SystemCall.BackgroundBlur"
         private const val OUTPUT_POOL_SIZE = 6
         private const val SLOT_STATS_INTERVAL_MS = 4_000L
-        private const val BLUR_DOWNSAMPLE = 2
+        private const val BASE_BLUR_DOWNSAMPLE = 2f
         private const val BLUR_RADIUS_MULTIPLIER = 3.0f
 
         private const val VERTEX_SHADER = """
             attribute vec4 aPosition;
             attribute vec2 aTexCoord;
             varying vec2 vTexCoord;
-
             void main() {
                 gl_Position = aPosition;
                 vTexCoord = aTexCoord;
@@ -314,7 +334,6 @@ class BackgroundBlurRenderer(
             varying vec2 vTexCoord;
             uniform sampler2D uTexture;
             uniform vec2 uTexelStep;
-
             void main() {
                 vec4 color = texture2D(uTexture, vTexCoord) * 0.2270270270;
                 color += texture2D(uTexture, vTexCoord + uTexelStep * 1.3846153846) * 0.3162162162;
@@ -331,7 +350,6 @@ class BackgroundBlurRenderer(
             uniform sampler2D uOriginalTexture;
             uniform sampler2D uBlurredTexture;
             uniform sampler2D uMaskTexture;
-
             void main() {
                 vec4 original = texture2D(uOriginalTexture, vTexCoord);
                 vec4 blurred = texture2D(uBlurredTexture, vTexCoord);
@@ -373,11 +391,9 @@ class BackgroundBlurRenderer(
         }
 
         fun uniform(name: String): Int = shader.getUniformLocation(name)
-
         fun draw() {
             GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
         }
-
         fun release() {
             shader.release()
         }
