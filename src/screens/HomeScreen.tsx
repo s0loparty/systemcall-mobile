@@ -2,6 +2,7 @@ import React, {useState} from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -9,6 +10,7 @@ import {
 } from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import type {NativeStackScreenProps} from '@react-navigation/native-stack';
+import {Cog6ToothIcon} from 'react-native-heroicons/outline';
 import {FloatingLabelInput} from '../components/FloatingLabelInput';
 import {PrimaryButton} from '../components/PrimaryButton';
 import {getRoom} from '../api/rooms';
@@ -55,12 +57,24 @@ export function HomeScreen({navigation}: Props) {
           contentContainerStyle={s.container}
           keyboardShouldPersistTaps="handled"
           bounces={false}>
-          <View>
-            <Text style={s.eyebrow}>SYSTEMCALL</Text>
-            <Text style={s.title}>Войти в звонок</Text>
-            <Text style={s.desc}>
-              Скопируйте ссылку на комнату и вставьте её сюда.
-            </Text>
+          <View style={s.top}>
+            <View style={s.heading}>
+              <View style={s.headingCopy}>
+                <Text style={s.eyebrow}>SYSTEMCALL</Text>
+                <Text style={s.title}>Войти в звонок</Text>
+                <Text style={s.desc}>
+                  Скопируйте ссылку на комнату и вставьте её сюда.
+                </Text>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Настройки"
+                hitSlop={8}
+                onPress={() => navigation.navigate('Settings')}
+                style={({pressed}) => [s.settingsButton, pressed && s.pressed]}>
+                <Cog6ToothIcon size={22} color="#fff" />
+              </Pressable>
+            </View>
           </View>
 
           <View style={s.form}>
@@ -94,6 +108,20 @@ const s = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 28,
   },
+  top: {gap: 20},
+  heading: {flexDirection: 'row', alignItems: 'flex-start', gap: 16},
+  headingCopy: {flex: 1},
+  settingsButton: {
+    width: 46,
+    height: 46,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#171717',
+    borderWidth: 1,
+    borderColor: '#292929',
+  },
+  pressed: {opacity: 0.65},
   eyebrow: {
     color: '#777',
     fontSize: 12,
