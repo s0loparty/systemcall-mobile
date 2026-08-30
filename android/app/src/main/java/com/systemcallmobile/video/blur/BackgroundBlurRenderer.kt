@@ -16,6 +16,7 @@ import org.webrtc.YuvConverter
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
+import java.util.concurrent.atomic.AtomicBoolean
 
 class BackgroundBlurRenderer(
     private val appContext: Context,
@@ -26,65 +27,74 @@ class BackgroundBlurRenderer(
     private val sourceBuffer = GlTextureFrameBuffer(GLES20.GL_RGBA)
     private val horizontalBlurBuffer = GlTextureFrameBuffer(GLES20.GL_RGBA)
     private val verticalBlurBuffer = GlTextureFrameBuffer(GLES20.GL_RGBA)
-    private val outputBuffer = GlTextureFrameBuffer(GLES20.GL_RGBA)
+    private val outputSlots = List(OUTPUT_POOL_SIZE) { OutputTextureSlot() }
     private val blurProgram = FullscreenProgram(BLUR_FRAGMENT_SHADER)
     private val compositeProgram = FullscreenProgram(COMPOSITE_FRAGMENT_SHADER)
     private val textureMatrix = Matrix()
     private var maskTextureId = 0
     private var uploadedMaskVersion = -1L
+    private var currentWidth = 0
+    private var currentHeight = 0
 
     fun render(
         frame: VideoFrame,
         mask: SegmentationMask,
         textureHelper: SurfaceTextureHelper,
-    ): VideoFrame {
+    ): VideoFrame? {
         val width = frame.rotatedWidth
         val height = frame.rotatedHeight
-
-        sourceBuffer.setSize(width, height)
-        horizontalBlurBuffer.setSize(width, height)
-        verticalBlurBuffer.setSize(width, height)
-        outputBuffer.setSize(width, height)
+        ensureSize(width, height)
         uploadMask(mask)
 
-        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, sourceBuffer.frameBufferId)
-        GLES20.glViewport(0, 0, width, height)
-        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
-        frameDrawer.drawFrame(frame, inputDrawer, textureMatrix, 0, 0, width, height)
+        val outputSlot = acquireOutputSlot() ?: return null
 
-        drawBlurPass(
-            sourceTextureId = sourceBuffer.textureId,
-            targetFrameBufferId = horizontalBlurBuffer.frameBufferId,
-            width = width,
-            height = height,
-            stepX = 1f / width.toFloat(),
-            stepY = 0f,
-        )
-        drawBlurPass(
-            sourceTextureId = horizontalBlurBuffer.textureId,
-            targetFrameBufferId = verticalBlurBuffer.frameBufferId,
-            width = width,
-            height = height,
-            stepX = 0f,
-            stepY = 1f / height.toFloat(),
-        )
-        drawComposite(width, height)
+        return try {
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, sourceBuffer.frameBufferId)
+            GLES20.glViewport(0, 0, width, height)
+            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+            frameDrawer.drawFrame(frame, inputDrawer, textureMatrix, 0, 0, width, height)
 
-        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
-        GlUtil.checkNoGLES2Error("BackgroundBlurRenderer.render")
+            drawBlurPass(
+                sourceTextureId = sourceBuffer.textureId,
+                targetFrameBufferId = horizontalBlurBuffer.frameBufferId,
+                width = width,
+                height = height,
+                stepX = 1f / width.toFloat(),
+                stepY = 0f,
+            )
+            drawBlurPass(
+                sourceTextureId = horizontalBlurBuffer.textureId,
+                targetFrameBufferId = verticalBlurBuffer.frameBufferId,
+                width = width,
+                height = height,
+                stepX = 0f,
+                stepY = 1f / height.toFloat(),
+            )
+            drawComposite(outputSlot.buffer.frameBufferId, width, height)
 
-        val textureBuffer = TextureBufferImpl(
-            width,
-            height,
-            VideoFrame.TextureBuffer.Type.RGB,
-            outputBuffer.textureId,
-            Matrix(),
-            textureHelper.handler,
-            yuvConverter,
-        ) {}
-        val output = textureBuffer.toI420()
-        textureBuffer.release()
-        return VideoFrame(output, 0, frame.timestampNs)
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+            GlUtil.checkNoGLES2Error("BackgroundBlurRenderer.render")
+
+            val textureBuffer = TextureBufferImpl(
+                width,
+                height,
+                VideoFrame.TextureBuffer.Type.RGB,
+                outputSlot.buffer.textureId,
+                Matrix(),
+                textureHelper.handler,
+                yuvConverter,
+            ) {
+                outputSlot.release()
+            }
+
+            // Keep the processed frame as a GPU texture. Converting the texture
+            // back to I420 here forces a GPU readback/synchronization on every
+            // camera frame and defeats most of the benefit of the GL pipeline.
+            VideoFrame(textureBuffer, 0, frame.timestampNs)
+        } catch (error: Throwable) {
+            outputSlot.release()
+            throw error
+        }
     }
 
     fun release() {
@@ -95,12 +105,30 @@ class BackgroundBlurRenderer(
         sourceBuffer.release()
         horizontalBlurBuffer.release()
         verticalBlurBuffer.release()
-        outputBuffer.release()
+        outputSlots.forEach { it.buffer.release() }
         blurProgram.release()
         compositeProgram.release()
         inputDrawer.release()
         frameDrawer.release()
         yuvConverter.release()
+    }
+
+    private fun ensureSize(width: Int, height: Int) {
+        if (width == currentWidth && height == currentHeight) return
+
+        sourceBuffer.setSize(width, height)
+        horizontalBlurBuffer.setSize(width, height)
+        verticalBlurBuffer.setSize(width, height)
+        outputSlots.forEach { it.buffer.setSize(width, height) }
+        currentWidth = width
+        currentHeight = height
+    }
+
+    private fun acquireOutputSlot(): OutputTextureSlot? {
+        for (slot in outputSlots) {
+            if (slot.tryAcquire()) return slot
+        }
+        return null
     }
 
     private fun uploadMask(mask: SegmentationMask) {
@@ -151,8 +179,8 @@ class BackgroundBlurRenderer(
         blurProgram.draw()
     }
 
-    private fun drawComposite(width: Int, height: Int) {
-        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, outputBuffer.frameBufferId)
+    private fun drawComposite(targetFrameBufferId: Int, width: Int, height: Int) {
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, targetFrameBufferId)
         GLES20.glViewport(0, 0, width, height)
         compositeProgram.use()
         compositeProgram.setTexture("uOriginalTexture", 0, sourceBuffer.textureId)
@@ -165,7 +193,20 @@ class BackgroundBlurRenderer(
     private fun supportsGpuBlur(): Boolean =
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && appContext.packageName.isNotBlank()
 
+    private class OutputTextureSlot {
+        val buffer = GlTextureFrameBuffer(GLES20.GL_RGBA)
+        private val inUse = AtomicBoolean(false)
+
+        fun tryAcquire(): Boolean = inUse.compareAndSet(false, true)
+
+        fun release() {
+            inUse.set(false)
+        }
+    }
+
     companion object {
+        private const val OUTPUT_POOL_SIZE = 3
+
         private const val VERTEX_SHADER = """
             attribute vec4 aPosition;
             attribute vec2 aTexCoord;
