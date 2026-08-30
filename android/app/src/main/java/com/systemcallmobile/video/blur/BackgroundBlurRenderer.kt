@@ -317,7 +317,7 @@ class BackgroundBlurRenderer(
         private const val OUTPUT_POOL_SIZE = 6
         private const val SLOT_STATS_INTERVAL_MS = 4_000L
         private const val BASE_BLUR_DOWNSAMPLE = 2f
-        private const val BLUR_RADIUS_MULTIPLIER = 3.0f
+        private const val BLUR_RADIUS_MULTIPLIER = 3.4f
 
         private const val VERTEX_SHADER = """
             attribute vec4 aPosition;
