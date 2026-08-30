@@ -25,6 +25,8 @@ import {MediaToggle} from '../components/call/MediaToggle';
 import {LocalPreview} from '../components/call/LocalPreview';
 import {PrimaryButton} from '../components/PrimaryButton';
 import {joinRoom} from '../api/rooms';
+import {useCameraSettings} from '../settings/CameraSettingsContext';
+import {getCameraCaptureOptions} from '../settings/cameraQuality';
 import type {RootStackParamList} from '../navigation/types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'PreJoin'>;
@@ -32,6 +34,7 @@ type AndroidPermission =
   (typeof PermissionsAndroid.PERMISSIONS)[keyof typeof PermissionsAndroid.PERMISSIONS];
 
 export function PreJoinScreen({route, navigation}: Props) {
+  const {qualityPresetId} = useCameraSettings();
   const [camera, setCamera] = useState(true);
   const [mic, setMic] = useState(true);
   const [name, setName] = useState('Гость');
@@ -44,10 +47,7 @@ export function PreJoinScreen({route, navigation}: Props) {
 
   const requestAndroidPermission = useCallback(
     async (permission: AndroidPermission) => {
-      if (Platform.OS !== 'android') {
-        return true;
-      }
-
+      if (Platform.OS !== 'android') return true;
       const granted = await PermissionsAndroid.request(permission);
       return granted === PermissionsAndroid.RESULTS.GRANTED;
     },
@@ -55,15 +55,11 @@ export function PreJoinScreen({route, navigation}: Props) {
   );
 
   const ensureCameraPermission = useCallback(async () => {
-    const granted = await requestAndroidPermission(
-      PermissionsAndroid.PERMISSIONS.CAMERA,
-    );
-
+    const granted = await requestAndroidPermission(PermissionsAndroid.PERMISSIONS.CAMERA);
     if (!granted) {
       setCamera(false);
       setError('Разрешите доступ к камере.');
     }
-
     return granted;
   }, [requestAndroidPermission]);
 
@@ -71,12 +67,10 @@ export function PreJoinScreen({route, navigation}: Props) {
     const granted = await requestAndroidPermission(
       PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
     );
-
     if (!granted) {
       setMic(false);
       setError('Разрешите доступ к микрофону.');
     }
-
     return granted;
   }, [requestAndroidPermission]);
 
@@ -89,12 +83,11 @@ export function PreJoinScreen({route, navigation}: Props) {
   const startPreview = useCallback(
     async (nextFacingMode: 'user' | 'environment') => {
       try {
-        if (!(await ensureCameraPermission())) {
-          return;
-        }
-
+        if (!(await ensureCameraPermission())) return;
         stopPreview();
-        const track = await createLocalVideoTrack({facingMode: nextFacingMode});
+        const track = await createLocalVideoTrack(
+          getCameraCaptureOptions(qualityPresetId, nextFacingMode),
+        );
         previewTrackRef.current = track;
         setPreviewTrack(track);
         setError(null);
@@ -104,7 +97,7 @@ export function PreJoinScreen({route, navigation}: Props) {
         setError('Не удалось запустить камеру.');
       }
     },
-    [ensureCameraPermission, stopPreview],
+    [ensureCameraPermission, qualityPresetId, stopPreview],
   );
 
   useEffect(() => {
@@ -118,7 +111,6 @@ export function PreJoinScreen({route, navigation}: Props) {
       stopPreview();
       return;
     }
-
     setCamera(true);
     void startPreview(facingMode);
   }, [camera, facingMode, startPreview, stopPreview]);
@@ -128,7 +120,6 @@ export function PreJoinScreen({route, navigation}: Props) {
       setMic(false);
       return;
     }
-
     if (await ensureMicrophonePermission()) {
       setMic(true);
       setError(null);
@@ -138,9 +129,7 @@ export function PreJoinScreen({route, navigation}: Props) {
   const switchCamera = useCallback(async () => {
     const next = facingMode === 'user' ? 'environment' : 'user';
     setFacingMode(next);
-    if (camera) {
-      await startPreview(next);
-    }
+    if (camera) await startPreview(next);
   }, [camera, facingMode, startPreview]);
 
   async function join() {
@@ -148,7 +137,6 @@ export function PreJoinScreen({route, navigation}: Props) {
       setError('Введите имя.');
       return;
     }
-
     if (route.params.hasPassword && !password) {
       setError('Введите пароль комнаты.');
       return;
@@ -157,14 +145,8 @@ export function PreJoinScreen({route, navigation}: Props) {
     try {
       setLoading(true);
       setError(null);
-
-      if (camera && !(await ensureCameraPermission())) {
-        return;
-      }
-
-      if (mic && !(await ensureMicrophonePermission())) {
-        return;
-      }
+      if (camera && !(await ensureCameraPermission())) return;
+      if (mic && !(await ensureMicrophonePermission())) return;
 
       const r = await joinRoom(
         route.params.publicId,
@@ -201,18 +183,10 @@ export function PreJoinScreen({route, navigation}: Props) {
 
   return (
     <SafeAreaView style={s.safe} edges={['top', 'bottom', 'left', 'right']}>
-      <KeyboardAvoidingView
-        style={s.safe}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <ScrollView
-          contentContainerStyle={s.container}
-          keyboardShouldPersistTaps="handled"
-          bounces={false}>
+      <KeyboardAvoidingView style={s.safe} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <ScrollView contentContainerStyle={s.container} keyboardShouldPersistTaps="handled" bounces={false}>
           <View style={s.header}>
-            <Pressable
-              hitSlop={10}
-              onPress={() => navigation.popToTop()}
-              style={s.backButton}>
+            <Pressable hitSlop={10} onPress={() => navigation.popToTop()} style={s.backButton}>
               <ArrowLeftIcon size={18} color="#fff" />
               <Text style={s.backLabel}>Назад</Text>
             </Pressable>
@@ -231,12 +205,7 @@ export function PreJoinScreen({route, navigation}: Props) {
           </View>
 
           <View style={s.form}>
-            <FloatingLabelInput
-              label="Ваше имя"
-              value={name}
-              onChangeText={setName}
-              autoCorrect={false}
-            />
+            <FloatingLabelInput label="Ваше имя" value={name} onChangeText={setName} autoCorrect={false} />
             {route.params.hasPassword ? (
               <FloatingLabelInput
                 label="Пароль"
@@ -258,13 +227,7 @@ export function PreJoinScreen({route, navigation}: Props) {
               <MediaToggle
                 label="Камера"
                 active={camera}
-                icon={
-                  camera ? (
-                    <VideoCameraIcon size={18} color="#fff" />
-                  ) : (
-                    <VideoCameraSlashIcon size={18} color="#fff" />
-                  )
-                }
+                icon={camera ? <VideoCameraIcon size={18} color="#fff" /> : <VideoCameraSlashIcon size={18} color="#fff" />}
                 onPress={toggleCamera}
               />
               <MediaToggle
@@ -275,11 +238,7 @@ export function PreJoinScreen({route, navigation}: Props) {
               />
             </View>
             <PrimaryButton
-              label={
-                route.params.waitingRoomEnabled
-                  ? 'Запросить вход'
-                  : 'Войти в звонок'
-              }
+              label={route.params.waitingRoomEnabled ? 'Запросить вход' : 'Войти в звонок'}
               loading={loading}
               onPress={join}
             />
@@ -292,36 +251,14 @@ export function PreJoinScreen({route, navigation}: Props) {
 
 const s = StyleSheet.create({
   safe: {flex: 1, backgroundColor: '#0b0b0b'},
-  container: {
-    flexGrow: 1,
-    gap: 16,
-    padding: 16,
-  },
-  header: {
-    gap: 14,
-  },
-  backButton: {
-    alignSelf: 'flex-start',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingVertical: 4,
-  },
-  backLabel: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
+  container: {flexGrow: 1, gap: 16, padding: 16},
+  header: {gap: 14},
+  backButton: {alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4},
+  backLabel: {color: '#fff', fontSize: 14, fontWeight: '600'},
   title: {color: '#fff', fontSize: 22, fontWeight: '800'},
   sub: {color: '#8b8b8b'},
-  preview: {
-    flex: 1,
-    minHeight: 260,
-  },
-  form: {
-    gap: 12,
-    paddingBottom: 8,
-  },
+  preview: {flex: 1, minHeight: 260},
+  form: {gap: 12, paddingBottom: 8},
   error: {color: '#ff7373'},
   controls: {flexDirection: 'row', justifyContent: 'center', gap: 8},
 });
