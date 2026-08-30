@@ -1,6 +1,5 @@
 package com.systemcallmobile.video.blur
 
-import android.graphics.Bitmap
 import android.opengl.GLES20
 import android.opengl.GLES30
 import android.util.Log
@@ -13,12 +12,12 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
- * Creates the small ML Kit segmentation input directly from the current GL frame.
+ * Creates a tiny RGBA segmentation sample directly from the current GL frame.
  *
  * On OpenGL ES 3 contexts, pixel readback is pipelined through two PBOs. We only
  * map a previous readback after its fence is already signaled, so CaptureThread
- * never waits for the GPU. GLES2 contexts keep the synchronous tiny-thumbnail
- * fallback.
+ * never waits for the GPU. This class deliberately stops at a raw RGBA copy:
+ * RGBA -> Bitmap conversion is done later on the segmentation worker.
  */
 class GpuSegmentationSampler {
     private var resources: GlResources? = null
@@ -30,10 +29,10 @@ class GpuSegmentationSampler {
     private var nextWriteSlot = 0
 
     /**
-     * Returns a bitmap only when segmentation input is ready. With the async PBO
-     * path the first call normally only queues a GPU readback, so null is expected.
+     * Returns a raw RGBA sample only when one is ready. With the async PBO path
+     * the first call normally only queues GPU readback, so null is expected.
      */
-    fun sample(frame: VideoFrame): Bitmap? {
+    fun sample(frame: VideoFrame): SegmentationRgbaSample? {
         val gl = getOrCreateResources()
         val sourceWidth = frame.rotatedWidth
         val sourceHeight = frame.rotatedHeight
@@ -41,7 +40,7 @@ class GpuSegmentationSampler {
         val scale = SEGMENTATION_MAX_SIDE.toFloat() / longestSide.toFloat()
         val width = maxOf(2, (sourceWidth * scale).toInt())
         val height = maxOf(2, (sourceHeight * scale).toInt())
-        val byteCount = width * height * 4
+        val byteCount = width * height * RGBA_BYTES_PER_PIXEL
 
         if (width != currentWidth || height != currentHeight) {
             gl.frameBuffer.setSize(width, height)
@@ -50,18 +49,19 @@ class GpuSegmentationSampler {
             currentHeight = height
         }
 
-        val supportsPbo = supportsPboReadback()
-        if (supportsPbo) {
+        if (supportsPboReadback()) {
             ensurePbos(byteCount)
 
             // Consume an older readback only when its fence says the GPU is done.
-            // This keeps glMapBufferRange from becoming a hidden CaptureThread stall.
+            // Mapping/copying this already-completed tiny PBO is the only CPU work
+            // kept on CaptureThread; color conversion and Bitmap allocation happen
+            // on the segmentation worker.
             val ready = consumeReadyPbo(width, height, byteCount)
 
             renderThumbnail(frame, gl, width, height)
             enqueuePboReadback(byteCount)
 
-            logFirstSample("gpu-pbo-async", width, height)
+            logFirstSample("gpu-pbo-async-raw", width, height)
             return ready
         }
 
@@ -81,9 +81,10 @@ class GpuSegmentationSampler {
         } finally {
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
         }
+        rgba.position(0)
 
-        logFirstSample("gpu-rgba-readback-sync-fallback", width, height)
-        return rgbaToBitmap(rgba, width, height)
+        logFirstSample("gpu-rgba-readback-sync-raw-fallback", width, height)
+        return SegmentationRgbaSample(width = width, height = height, rgba = rgba)
     }
 
     private fun renderThumbnail(
@@ -145,8 +146,6 @@ class GpuSegmentationSampler {
 
         val slot = pboSlots[nextWriteSlot]
         if (slot.sync != 0L && !isFenceReady(slot.sync)) {
-            // Both PBOs should normally have plenty of time (~160 ms) to finish.
-            // If this slot is still busy, skip this sample rather than stalling capture.
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
             return
         }
@@ -175,7 +174,11 @@ class GpuSegmentationSampler {
         nextWriteSlot = (nextWriteSlot + 1) % pboSlots.size
     }
 
-    private fun consumeReadyPbo(width: Int, height: Int, byteCount: Int): Bitmap? {
+    private fun consumeReadyPbo(
+        width: Int,
+        height: Int,
+        byteCount: Int,
+    ): SegmentationRgbaSample? {
         for (slot in pboSlots) {
             val sync = slot.sync
             if (sync == 0L || !isFenceReady(sync)) continue
@@ -202,7 +205,7 @@ class GpuSegmentationSampler {
             GLES30.glUnmapBuffer(GLES30.GL_PIXEL_PACK_BUFFER)
             GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
             clearFence(slot)
-            return rgbaToBitmap(copy, width, height)
+            return SegmentationRgbaSample(width = width, height = height, rgba = copy)
         }
         return null
     }
@@ -231,24 +234,6 @@ class GpuSegmentationSampler {
         }
         pboSlots = emptyList()
         nextWriteSlot = 0
-    }
-
-    private fun rgbaToBitmap(rgba: ByteBuffer, width: Int, height: Int): Bitmap {
-        val pixels = IntArray(width * height)
-        for (y in 0 until height) {
-            // OpenGL readback starts at the bottom-left; Bitmap starts at top-left.
-            val sourceY = height - 1 - y
-            for (x in 0 until width) {
-                val offset = (sourceY * width + x) * 4
-                val r = rgba.get(offset).toInt() and 0xff
-                val g = rgba.get(offset + 1).toInt() and 0xff
-                val b = rgba.get(offset + 2).toInt() and 0xff
-                val a = rgba.get(offset + 3).toInt() and 0xff
-                pixels[y * width + x] =
-                    (a shl 24) or (r shl 16) or (g shl 8) or b
-            }
-        }
-        return Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888)
     }
 
     private fun logFirstSample(path: String, width: Int, height: Int) {
@@ -282,6 +267,13 @@ class GpuSegmentationSampler {
     companion object {
         private const val TAG = "SystemCall.Segmentation"
         private const val SEGMENTATION_MAX_SIDE = 192
+        private const val RGBA_BYTES_PER_PIXEL = 4
         private const val PBO_COUNT = 2
     }
 }
+
+data class SegmentationRgbaSample(
+    val width: Int,
+    val height: Int,
+    val rgba: ByteBuffer,
+)
