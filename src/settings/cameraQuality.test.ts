@@ -15,11 +15,13 @@ describe('camera quality presets', () => {
     ]);
   });
 
-  it('uses high 720p 15 FPS as the default', () => {
-    expect(DEFAULT_CAMERA_QUALITY_PRESET_ID).toBe('high');
-    expect(getCameraQualityPreset('high')).toMatchObject({
-      width: 1280,
-      height: 720,
+  it('uses medium 480p 15 FPS as the default', () => {
+    expect(DEFAULT_CAMERA_QUALITY_PRESET_ID).toBe('medium');
+    expect(
+      getCameraQualityPreset(DEFAULT_CAMERA_QUALITY_PRESET_ID),
+    ).toMatchObject({
+      width: 854,
+      height: 480,
       frameRate: 15,
     });
   });

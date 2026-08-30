@@ -14,6 +14,7 @@ import type {NativeStackScreenProps} from '@react-navigation/native-stack';
 import {
   ArrowsRightLeftIcon,
   ArrowLeftIcon,
+  CheckIcon,
   MicrophoneIcon,
   VideoCameraIcon,
   VideoCameraSlashIcon,
@@ -28,6 +29,7 @@ import {joinRoom} from '../api/rooms';
 import {useCameraSettings} from '../settings/CameraSettingsContext';
 import {getCameraCaptureOptions} from '../settings/cameraQuality';
 import type {RootStackParamList} from '../navigation/types';
+import {setBackgroundBlur} from '../utils/backgroundBlur';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'PreJoin'>;
 type AndroidPermission =
@@ -37,11 +39,14 @@ export function PreJoinScreen({route, navigation}: Props) {
   const {qualityPresetId} = useCameraSettings();
   const [camera, setCamera] = useState(true);
   const [mic, setMic] = useState(true);
+  const [backgroundBlur, setBackgroundBlurEnabled] = useState(false);
   const [name, setName] = useState('Гость');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [previewTrack, setPreviewTrack] = useState<LocalVideoTrack | null>(null);
+  const [previewTrack, setPreviewTrack] = useState<LocalVideoTrack | null>(
+    null,
+  );
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const previewTrackRef = useRef<LocalVideoTrack | null>(null);
 
@@ -55,7 +60,9 @@ export function PreJoinScreen({route, navigation}: Props) {
   );
 
   const ensureCameraPermission = useCallback(async () => {
-    const granted = await requestAndroidPermission(PermissionsAndroid.PERMISSIONS.CAMERA);
+    const granted = await requestAndroidPermission(
+      PermissionsAndroid.PERMISSIONS.CAMERA,
+    );
     if (!granted) {
       setCamera(false);
       setError('Разрешите доступ к камере.');
@@ -88,16 +95,28 @@ export function PreJoinScreen({route, navigation}: Props) {
         const track = await createLocalVideoTrack(
           getCameraCaptureOptions(qualityPresetId, nextFacingMode),
         );
+        if (backgroundBlur) {
+          try {
+            setBackgroundBlur(track, true);
+          } catch (e) {
+            setBackgroundBlurEnabled(false);
+            setError(
+              e instanceof Error
+                ? e.message
+                : 'Не удалось включить размытие фона.',
+            );
+          }
+        }
         previewTrackRef.current = track;
         setPreviewTrack(track);
-        setError(null);
+        if (!backgroundBlur) setError(null);
       } catch (e) {
         console.warn('PreJoin camera preview failed', e);
         setCamera(false);
         setError('Не удалось запустить камеру.');
       }
     },
-    [ensureCameraPermission, qualityPresetId, stopPreview],
+    [backgroundBlur, ensureCameraPermission, qualityPresetId, stopPreview],
   );
 
   useEffect(() => {
@@ -125,6 +144,19 @@ export function PreJoinScreen({route, navigation}: Props) {
       setError(null);
     }
   }, [ensureMicrophonePermission, mic]);
+
+  const toggleBackgroundBlur = useCallback(() => {
+    const enabled = !backgroundBlur;
+    try {
+      setBackgroundBlur(previewTrackRef.current, enabled);
+      setBackgroundBlurEnabled(enabled);
+      setError(null);
+    } catch (e) {
+      setError(
+        e instanceof Error ? e.message : 'Не удалось включить размытие фона.',
+      );
+    }
+  }, [backgroundBlur]);
 
   const switchCamera = useCallback(async () => {
     const next = facingMode === 'user' ? 'environment' : 'user';
@@ -163,6 +195,8 @@ export function PreJoinScreen({route, navigation}: Props) {
           cameraEnabled: camera,
           microphoneEnabled: mic,
           cameraFacingMode: facingMode,
+          cameraQualityPresetId: qualityPresetId,
+          backgroundBlurEnabled: backgroundBlur,
         });
         return;
       }
@@ -173,6 +207,8 @@ export function PreJoinScreen({route, navigation}: Props) {
         cameraEnabled: camera,
         microphoneEnabled: mic,
         cameraFacingMode: facingMode,
+        cameraQualityPresetId: qualityPresetId,
+        backgroundBlurEnabled: backgroundBlur,
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось войти.');
@@ -183,10 +219,18 @@ export function PreJoinScreen({route, navigation}: Props) {
 
   return (
     <SafeAreaView style={s.safe} edges={['top', 'bottom', 'left', 'right']}>
-      <KeyboardAvoidingView style={s.safe} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <ScrollView contentContainerStyle={s.container} keyboardShouldPersistTaps="handled" bounces={false}>
+      <KeyboardAvoidingView
+        style={s.safe}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <ScrollView
+          contentContainerStyle={s.container}
+          keyboardShouldPersistTaps="handled"
+          bounces={false}>
           <View style={s.header}>
-            <Pressable hitSlop={10} onPress={() => navigation.popToTop()} style={s.backButton}>
+            <Pressable
+              hitSlop={10}
+              onPress={() => navigation.popToTop()}
+              style={s.backButton}>
               <ArrowLeftIcon size={18} color="#fff" />
               <Text style={s.backLabel}>Назад</Text>
             </Pressable>
@@ -205,7 +249,12 @@ export function PreJoinScreen({route, navigation}: Props) {
           </View>
 
           <View style={s.form}>
-            <FloatingLabelInput label="Ваше имя" value={name} onChangeText={setName} autoCorrect={false} />
+            <FloatingLabelInput
+              label="Ваше имя"
+              value={name}
+              onChangeText={setName}
+              autoCorrect={false}
+            />
             {route.params.hasPassword ? (
               <FloatingLabelInput
                 label="Пароль"
@@ -216,6 +265,23 @@ export function PreJoinScreen({route, navigation}: Props) {
                 autoCorrect={false}
               />
             ) : null}
+            <Pressable
+              accessibilityRole="checkbox"
+              accessibilityState={{checked: backgroundBlur}}
+              onPress={toggleBackgroundBlur}
+              style={s.blurOption}>
+              <View style={[s.checkbox, backgroundBlur && s.checkboxChecked]}>
+                {backgroundBlur ? (
+                  <CheckIcon size={14} color="#0b0b0b" />
+                ) : null}
+              </View>
+              <View style={s.blurCopy}>
+                <Text style={s.blurTitle}>Размыть фон</Text>
+                <Text style={s.blurHint}>
+                  Эффект виден в превью и участникам звонка
+                </Text>
+              </View>
+            </Pressable>
             {error ? <Text style={s.error}>{error}</Text> : null}
             <View style={s.controls}>
               <MediaToggle
@@ -227,7 +293,13 @@ export function PreJoinScreen({route, navigation}: Props) {
               <MediaToggle
                 label="Камера"
                 active={camera}
-                icon={camera ? <VideoCameraIcon size={18} color="#fff" /> : <VideoCameraSlashIcon size={18} color="#fff" />}
+                icon={
+                  camera ? (
+                    <VideoCameraIcon size={18} color="#fff" />
+                  ) : (
+                    <VideoCameraSlashIcon size={18} color="#fff" />
+                  )
+                }
                 onPress={toggleCamera}
               />
               <MediaToggle
@@ -238,7 +310,11 @@ export function PreJoinScreen({route, navigation}: Props) {
               />
             </View>
             <PrimaryButton
-              label={route.params.waitingRoomEnabled ? 'Запросить вход' : 'Войти в звонок'}
+              label={
+                route.params.waitingRoomEnabled
+                  ? 'Запросить вход'
+                  : 'Войти в звонок'
+              }
               loading={loading}
               onPress={join}
             />
@@ -253,12 +329,43 @@ const s = StyleSheet.create({
   safe: {flex: 1, backgroundColor: '#0b0b0b'},
   container: {flexGrow: 1, gap: 16, padding: 16},
   header: {gap: 14},
-  backButton: {alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4},
+  backButton: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 4,
+  },
   backLabel: {color: '#fff', fontSize: 14, fontWeight: '600'},
   title: {color: '#fff', fontSize: 22, fontWeight: '800'},
   sub: {color: '#8b8b8b'},
   preview: {flex: 1, minHeight: 260},
   form: {gap: 12, paddingBottom: 8},
+  blurOption: {
+    minHeight: 58,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#292929',
+    backgroundColor: '#151515',
+  },
+  checkbox: {
+    width: 22,
+    height: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#555',
+  },
+  checkboxChecked: {backgroundColor: '#fff', borderColor: '#fff'},
+  blurCopy: {flex: 1, gap: 2},
+  blurTitle: {color: '#fff', fontSize: 15, fontWeight: '700'},
+  blurHint: {color: '#777', fontSize: 12, lineHeight: 16},
   error: {color: '#ff7373'},
   controls: {flexDirection: 'row', justifyContent: 'center', gap: 8},
 });

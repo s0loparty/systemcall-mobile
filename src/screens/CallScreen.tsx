@@ -5,25 +5,23 @@ import {Room} from 'livekit-client';
 import {CallScreenContent} from '../components/call/CallScreenContent';
 import {useCallLifecycle} from '../hooks/useCallLifecycle';
 import {pip} from '../native/pip';
-import {useCameraSettings} from '../settings/CameraSettingsContext';
 import {getCameraCaptureOptions} from '../settings/cameraQuality';
 import type {RootStackParamList} from '../navigation/types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Call'>;
 
 export function CallScreen({route, navigation}: Props) {
-  const {qualityPresetId} = useCameraSettings();
   const configuredRoom = useMemo(
     () =>
       new Room({
         adaptiveStream: true,
         dynacast: true,
         videoCaptureDefaults: getCameraCaptureOptions(
-          qualityPresetId,
+          route.params.cameraQualityPresetId,
           route.params.cameraFacingMode,
         ),
       }),
-    [qualityPresetId, route.params.cameraFacingMode],
+    [route.params.cameraFacingMode, route.params.cameraQualityPresetId],
   );
   const createRoom = useCallback(() => configuredRoom, [configuredRoom]);
 

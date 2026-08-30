@@ -44,14 +44,14 @@ export const CAMERA_QUALITY_PRESETS: readonly CameraQualityPreset[] = [
   },
 ] as const;
 
-export const DEFAULT_CAMERA_QUALITY_PRESET_ID: CameraQualityPresetId = 'high';
+export const DEFAULT_CAMERA_QUALITY_PRESET_ID: CameraQualityPresetId = 'medium';
 
 export function getCameraQualityPreset(
   id: CameraQualityPresetId,
 ): CameraQualityPreset {
   return (
     CAMERA_QUALITY_PRESETS.find(preset => preset.id === id) ??
-    CAMERA_QUALITY_PRESETS[2]
+    CAMERA_QUALITY_PRESETS[1]
   );
 }
 
