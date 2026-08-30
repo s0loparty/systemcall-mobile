@@ -39,10 +39,7 @@ export function WaitingRoomScreen({route, navigation}: Props) {
           return;
         }
 
-        if (
-          result.waiting_room.status === 'approved' &&
-          result.livekit
-        ) {
+        if (result.waiting_room.status === 'approved' && result.livekit) {
           finished.current = true;
           navigation.replace('Call', {
             roomName: result.room.name,
@@ -50,6 +47,7 @@ export function WaitingRoomScreen({route, navigation}: Props) {
             cameraEnabled: route.params.cameraEnabled,
             microphoneEnabled: route.params.microphoneEnabled,
             cameraFacingMode: route.params.cameraFacingMode,
+            backgroundBlurEnabled: route.params.backgroundBlurEnabled,
           });
           return;
         }
