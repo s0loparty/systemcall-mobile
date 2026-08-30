@@ -116,6 +116,15 @@ class BackgroundBlurProcessor(
             return true
         }
         val preprocessingMs = (System.nanoTime() - startedAtNs) / 1_000_000L
+
+        if (bitmap == null) {
+            // Async PBO path queued this frame but the previous GPU readback is not
+            // ready yet. Release the segmentation gate so a later frame can poll
+            // the fence without blocking CaptureThread.
+            segmentationEngine.cancelSample()
+            return true
+        }
+
         segmentationEngine.processSample(bitmap, preprocessingMs)
         return true
     }
