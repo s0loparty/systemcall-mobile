@@ -10,6 +10,7 @@ class BackgroundBlurProcessor(
     context: Context,
 ) : VideoFrameProcessor {
     private val segmentationEngine = SegmentationEngine()
+    private val segmentationSampler = GpuSegmentationSampler()
     private val renderer = BackgroundBlurRenderer(context.applicationContext)
     private var inputFrames = 0
     private var outputFrames = 0
@@ -42,7 +43,7 @@ class BackgroundBlurProcessor(
                 )
             }
 
-            segmentationEngine.maybeStart(frame)
+            maybeSampleSegmentation(frame)
             val mask = segmentationEngine.currentMask()
             if (mask == null) {
                 droppedFrames++
@@ -87,6 +88,21 @@ class BackgroundBlurProcessor(
             Log.e(TAG, "BlurDiagnostics: background blur processing failed", error)
             null
         }
+    }
+
+    private fun maybeSampleSegmentation(frame: VideoFrame) {
+        if (!segmentationEngine.shouldSample()) return
+
+        val startedAtNs = System.nanoTime()
+        val bitmap = try {
+            segmentationSampler.sample(frame)
+        } catch (error: Throwable) {
+            segmentationEngine.cancelSample()
+            Log.w(TAG, "BlurDiagnostics: GPU segmentation sampling failed", error)
+            return
+        }
+        val preprocessingMs = (System.nanoTime() - startedAtNs) / 1_000_000L
+        segmentationEngine.processSample(bitmap, preprocessingMs)
     }
 
     private fun recordFrameGap() {
