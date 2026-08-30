@@ -1,23 +1,14 @@
-import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useMemo} from 'react';
 import type {NativeStackScreenProps} from '@react-navigation/native-stack';
 import {RoomContext} from '@livekit/react-native';
-import {
-  createLocalVideoTrack,
-  Room,
-  type LocalVideoTrack,
-} from 'livekit-client';
+import {Room} from 'livekit-client';
 import {CallScreenContent} from '../components/call/CallScreenContent';
 import {useCallLifecycle} from '../hooks/useCallLifecycle';
 import {pip} from '../native/pip';
 import {getCameraCaptureOptions} from '../settings/cameraQuality';
 import type {RootStackParamList} from '../navigation/types';
-import {setBackgroundBlur} from '../utils/backgroundBlur';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Call'>;
-
-// Temporary A/B diagnostic: keep the selected-quality local camera + blur
-// preview while connected to LiveKit, but do not publish video to the room.
-const DIAGNOSTIC_UNPUBLISHED_VIDEO = true;
 
 export function CallScreen({route, navigation}: Props) {
   const configuredRoom = useMemo(
@@ -26,7 +17,13 @@ export function CallScreen({route, navigation}: Props) {
         adaptiveStream: true,
         dynacast: true,
         publishDefaults: {
+          // Diagnostic A/B: publish a single 1080p layer with H.264 instead of
+          // LiveKit's default VP8. On Android this lets us check whether the
+          // device's H.264 encoder can handle high-quality publishing without
+          // starving the local preview/render pipeline.
           simulcast: false,
+          videoCodec: 'h264',
+          degradationPreference: 'maintain-framerate',
         },
         videoCaptureDefaults: getCameraCaptureOptions(
           route.params.cameraQualityPresetId,
@@ -36,14 +33,6 @@ export function CallScreen({route, navigation}: Props) {
     [route.params.cameraFacingMode, route.params.cameraQualityPresetId],
   );
   const createRoom = useCallback(() => configuredRoom, [configuredRoom]);
-
-  const diagnosticParams = useMemo(
-    () =>
-      DIAGNOSTIC_UNPUBLISHED_VIDEO
-        ? {...route.params, cameraEnabled: false}
-        : route.params,
-    [route.params],
-  );
 
   const {
     room,
@@ -55,71 +44,13 @@ export function CallScreen({route, navigation}: Props) {
     changeCamera,
     switchCamera,
     leaveCall,
-  } = useCallLifecycle(diagnosticParams, () => navigation.popToTop(), {
-    createRoom,
-  });
-
-  const [diagnosticPreviewTrack, setDiagnosticPreviewTrack] =
-    useState<LocalVideoTrack | null>(null);
-  const diagnosticPreviewTrackRef = useRef<LocalVideoTrack | null>(null);
-
-  useEffect(() => {
-    if (!DIAGNOSTIC_UNPUBLISHED_VIDEO || !route.params.cameraEnabled) return;
-
-    let cancelled = false;
-
-    void (async () => {
-      try {
-        const track = await createLocalVideoTrack(
-          getCameraCaptureOptions(
-            route.params.cameraQualityPresetId,
-            route.params.cameraFacingMode,
-          ),
-        );
-
-        if (cancelled) {
-          track.stop();
-          return;
-        }
-
-        if (route.params.backgroundBlurEnabled) {
-          setBackgroundBlur(track, true);
-        }
-
-        diagnosticPreviewTrackRef.current = track;
-        setDiagnosticPreviewTrack(track);
-        console.info(
-          '[VideoDiagnostic] local camera active but NOT published to LiveKit',
-        );
-      } catch (error) {
-        console.warn('[VideoDiagnostic] failed to create local preview', error);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      const track = diagnosticPreviewTrackRef.current;
-      diagnosticPreviewTrackRef.current = null;
-      setDiagnosticPreviewTrack(null);
-      if (track) {
-        try {
-          setBackgroundBlur(track, false);
-        } catch {
-          // Track teardown must continue even if the diagnostic effect is gone.
-        }
-        track.stop();
-      }
-    };
-  }, [
-    route.params.backgroundBlurEnabled,
-    route.params.cameraEnabled,
-    route.params.cameraFacingMode,
-    route.params.cameraQualityPresetId,
-  ]);
+  } = useCallLifecycle(route.params, () => navigation.popToTop(), {createRoom});
 
   useEffect(() => {
     pip.setCallScreenActive(true);
-    return () => pip.setCallScreenActive(false);
+    return () => {
+      pip.setCallScreenActive(false);
+    };
   }, []);
 
   return (
@@ -128,25 +59,11 @@ export function CallScreen({route, navigation}: Props) {
         roomName={route.params.roomName}
         status={status}
         desiredMicrophoneEnabled={desiredMicrophoneEnabled}
-        desiredCameraEnabled={
-          DIAGNOSTIC_UNPUBLISHED_VIDEO
-            ? route.params.cameraEnabled
-            : desiredCameraEnabled
-        }
+        desiredCameraEnabled={desiredCameraEnabled}
         cameraFacingMode={cameraFacingMode}
-        diagnosticPreviewTrack={diagnosticPreviewTrack}
-        diagnosticPreviewEnabled={Boolean(
-          DIAGNOSTIC_UNPUBLISHED_VIDEO &&
-            route.params.cameraEnabled &&
-            diagnosticPreviewTrack,
-        )}
         onMicrophoneChange={changeMicrophone}
-        onCameraChange={
-          DIAGNOSTIC_UNPUBLISHED_VIDEO ? async () => {} : changeCamera
-        }
-        onSwitchCamera={
-          DIAGNOSTIC_UNPUBLISHED_VIDEO ? async () => {} : switchCamera
-        }
+        onCameraChange={changeCamera}
+        onSwitchCamera={switchCamera}
         onLeave={() => void leaveCall()}
       />
     </RoomContext.Provider>
