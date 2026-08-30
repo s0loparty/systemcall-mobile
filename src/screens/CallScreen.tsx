@@ -1,7 +1,11 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import type {NativeStackScreenProps} from '@react-navigation/native-stack';
 import {RoomContext} from '@livekit/react-native';
-import {createLocalVideoTrack, Room, type LocalVideoTrack} from 'livekit-client';
+import {
+  createLocalVideoTrack,
+  Room,
+  type LocalVideoTrack,
+} from 'livekit-client';
 import {CallScreenContent} from '../components/call/CallScreenContent';
 import {useCallLifecycle} from '../hooks/useCallLifecycle';
 import {pip} from '../native/pip';
@@ -21,7 +25,9 @@ export function CallScreen({route, navigation}: Props) {
       new Room({
         adaptiveStream: true,
         dynacast: true,
-        publishDefaults: {simulcast: false},
+        publishDefaults: {
+          simulcast: false,
+        },
         videoCaptureDefaults: getCameraCaptureOptions(
           route.params.cameraQualityPresetId,
           route.params.cameraFacingMode,
@@ -49,7 +55,9 @@ export function CallScreen({route, navigation}: Props) {
     changeCamera,
     switchCamera,
     leaveCall,
-  } = useCallLifecycle(diagnosticParams, () => navigation.popToTop(), {createRoom});
+  } = useCallLifecycle(diagnosticParams, () => navigation.popToTop(), {
+    createRoom,
+  });
 
   const [diagnosticPreviewTrack, setDiagnosticPreviewTrack] =
     useState<LocalVideoTrack | null>(null);
