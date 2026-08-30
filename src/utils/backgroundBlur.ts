@@ -33,7 +33,5 @@ export function setBackgroundBlur(
     return;
   }
 
-  // react-native-webrtc on Android expects null to remove the processor.
-  // An empty array can leave an empty VideoEffectProcessor in the pipeline.
   mediaTrack._setVideoEffects(enabled ? [BACKGROUND_BLUR_EFFECT] : null);
 }
