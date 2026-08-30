@@ -1,4 +1,8 @@
-import {BACKGROUND_BLUR_EFFECT, setBackgroundBlur} from './backgroundBlur';
+import {
+  BACKGROUND_BLUR_EFFECT,
+  FRAME_PACING_DIAGNOSTICS_EFFECT,
+  setBackgroundBlur,
+} from './backgroundBlur';
 
 describe('setBackgroundBlur', () => {
   function makeTrack(setEffects?: jest.Mock) {
@@ -15,12 +19,12 @@ describe('setBackgroundBlur', () => {
     expect(setEffects).toHaveBeenCalledWith([BACKGROUND_BLUR_EFFECT]);
   });
 
-  it('clears the Android processor with null', () => {
+  it('uses the pass-through frame pacing diagnostic while blur is disabled', () => {
     const setEffects = jest.fn();
 
     setBackgroundBlur(makeTrack(setEffects), false, 'android');
 
-    expect(setEffects).toHaveBeenCalledWith(null);
+    expect(setEffects).toHaveBeenCalledWith([FRAME_PACING_DIAGNOSTICS_EFFECT]);
   });
 
   it('throws a useful error when Android video effects are unavailable', () => {
