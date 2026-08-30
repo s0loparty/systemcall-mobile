@@ -30,7 +30,9 @@ export function CameraSettingsProvider({children}: React.PropsWithChildren) {
 export function useCameraSettings(): CameraSettingsValue {
   const value = useContext(CameraSettingsContext);
   if (!value) {
-    throw new Error('useCameraSettings must be used inside CameraSettingsProvider');
+    throw new Error(
+      'useCameraSettings must be used inside CameraSettingsProvider',
+    );
   }
   return value;
 }

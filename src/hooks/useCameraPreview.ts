@@ -1,7 +1,10 @@
 import {useCallback, useEffect, useRef, useState} from 'react';
 import {PermissionsAndroid, Platform} from 'react-native';
 import {createLocalVideoTrack, type LocalVideoTrack} from 'livekit-client';
-import {getCameraCaptureOptions, type CameraQualityPresetId} from '../settings/cameraQuality';
+import {
+  getCameraCaptureOptions,
+  type CameraQualityPresetId,
+} from '../settings/cameraQuality';
 
 export function useCameraPreview(qualityPresetId: CameraQualityPresetId) {
   const [track, setTrack] = useState<LocalVideoTrack | null>(null);

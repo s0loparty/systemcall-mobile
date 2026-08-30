@@ -49,6 +49,7 @@ export function PreJoinScreen({route, navigation}: Props) {
   );
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const previewTrackRef = useRef<LocalVideoTrack | null>(null);
+  const backgroundBlurRef = useRef(backgroundBlur);
 
   const requestAndroidPermission = useCallback(
     async (permission: AndroidPermission) => {
@@ -95,10 +96,11 @@ export function PreJoinScreen({route, navigation}: Props) {
         const track = await createLocalVideoTrack(
           getCameraCaptureOptions(qualityPresetId, nextFacingMode),
         );
-        if (backgroundBlur) {
+        if (backgroundBlurRef.current) {
           try {
             setBackgroundBlur(track, true);
           } catch (e) {
+            backgroundBlurRef.current = false;
             setBackgroundBlurEnabled(false);
             setError(
               e instanceof Error
@@ -109,14 +111,14 @@ export function PreJoinScreen({route, navigation}: Props) {
         }
         previewTrackRef.current = track;
         setPreviewTrack(track);
-        if (!backgroundBlur) setError(null);
+        if (!backgroundBlurRef.current) setError(null);
       } catch (e) {
         console.warn('PreJoin camera preview failed', e);
         setCamera(false);
         setError('Не удалось запустить камеру.');
       }
     },
-    [backgroundBlur, ensureCameraPermission, qualityPresetId, stopPreview],
+    [ensureCameraPermission, qualityPresetId, stopPreview],
   );
 
   useEffect(() => {
@@ -149,6 +151,7 @@ export function PreJoinScreen({route, navigation}: Props) {
     const enabled = !backgroundBlur;
     try {
       setBackgroundBlur(previewTrackRef.current, enabled);
+      backgroundBlurRef.current = enabled;
       setBackgroundBlurEnabled(enabled);
       setError(null);
     } catch (e) {

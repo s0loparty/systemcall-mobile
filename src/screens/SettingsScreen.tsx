@@ -13,7 +13,10 @@ export function SettingsScreen({navigation}: Props) {
     <SafeAreaView style={s.safe} edges={['top', 'bottom', 'left', 'right']}>
       <ScrollView contentContainerStyle={s.container} bounces={false}>
         <View style={s.header}>
-          <Pressable hitSlop={10} onPress={() => navigation.goBack()} style={s.back}>
+          <Pressable
+            hitSlop={10}
+            onPress={() => navigation.goBack()}
+            style={s.back}>
             <ArrowLeftIcon size={20} color="#fff" />
           </Pressable>
           <View style={s.headerCopy}>
