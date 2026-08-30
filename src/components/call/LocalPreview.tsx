@@ -41,6 +41,11 @@ export function LocalPreview({track, enabled, compact = false}: Props) {
           streamURL={stream.toURL()}
           objectFit="cover"
           mirror
+          // On Android zOrder=1 maps the SurfaceViewRenderer to the media-overlay
+          // surface layer. This keeps the local self-view off the default surface
+          // composition path, which is worth testing because only local rendering
+          // stutters while the encoded/remote stream stays smooth.
+          zOrder={1}
           style={s.video}
         />
       ) : (
