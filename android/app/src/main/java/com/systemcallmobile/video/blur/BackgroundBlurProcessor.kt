@@ -16,6 +16,16 @@ class BackgroundBlurProcessor(
     private var outputFrames = 0
     private var droppedFrames = 0
     private var totalRenderMs = 0L
+    private var totalProcessUs = 0L
+    private var processSamples = 0
+    private var maxProcessMs = 0f
+    private var processSpikes = 0
+    private var totalNormalProcessUs = 0L
+    private var normalProcessSamples = 0
+    private var maxNormalProcessMs = 0f
+    private var totalSegmentationProcessUs = 0L
+    private var segmentationProcessSamples = 0
+    private var maxSegmentationProcessMs = 0f
     private var lastStatsLogMs = System.currentTimeMillis()
     private var firstFrameLogged = false
     private var firstMaskLogged = false
@@ -29,7 +39,11 @@ class BackgroundBlurProcessor(
     }
 
     override fun process(frame: VideoFrame, textureHelper: SurfaceTextureHelper): VideoFrame? {
-        return try {
+        val processStartedAtNs = System.nanoTime()
+        var sampledSegmentation = false
+        var output: VideoFrame? = null
+
+        try {
             recordFrameGap()
             inputFrames++
             if (!firstFrameLogged) {
@@ -43,11 +57,10 @@ class BackgroundBlurProcessor(
                 )
             }
 
-            maybeSampleSegmentation(frame)
+            sampledSegmentation = maybeSampleSegmentation(frame)
             val mask = segmentationEngine.currentMask()
             if (mask == null) {
                 droppedFrames++
-                maybeLogStats()
                 return null
             }
 
@@ -61,7 +74,7 @@ class BackgroundBlurProcessor(
             }
 
             val startedAtNs = System.nanoTime()
-            val output = renderer.render(frame, mask, textureHelper)
+            output = renderer.render(frame, mask, textureHelper)
             totalRenderMs += (System.nanoTime() - startedAtNs) / 1_000_000L
 
             if (output != null) {
@@ -80,18 +93,19 @@ class BackgroundBlurProcessor(
                 droppedFrames++
             }
 
-            maybeLogStats()
-            output
+            return output
         } catch (error: Throwable) {
             droppedFrames++
-            maybeLogStats()
             Log.e(TAG, "BlurDiagnostics: background blur processing failed", error)
-            null
+            return null
+        } finally {
+            recordProcessDuration(processStartedAtNs, sampledSegmentation)
+            maybeLogStats()
         }
     }
 
-    private fun maybeSampleSegmentation(frame: VideoFrame) {
-        if (!segmentationEngine.shouldSample()) return
+    private fun maybeSampleSegmentation(frame: VideoFrame): Boolean {
+        if (!segmentationEngine.shouldSample()) return false
 
         val startedAtNs = System.nanoTime()
         val bitmap = try {
@@ -99,10 +113,33 @@ class BackgroundBlurProcessor(
         } catch (error: Throwable) {
             segmentationEngine.cancelSample()
             Log.w(TAG, "BlurDiagnostics: GPU segmentation sampling failed", error)
-            return
+            return true
         }
         val preprocessingMs = (System.nanoTime() - startedAtNs) / 1_000_000L
         segmentationEngine.processSample(bitmap, preprocessingMs)
+        return true
+    }
+
+    private fun recordProcessDuration(startedAtNs: Long, sampledSegmentation: Boolean) {
+        val durationUs = (System.nanoTime() - startedAtNs) / 1_000L
+        val durationMs = durationUs / 1_000f
+
+        totalProcessUs += durationUs
+        processSamples++
+        maxProcessMs = maxOf(maxProcessMs, durationMs)
+        if (durationMs >= PROCESS_SPIKE_THRESHOLD_MS) {
+            processSpikes++
+        }
+
+        if (sampledSegmentation) {
+            totalSegmentationProcessUs += durationUs
+            segmentationProcessSamples++
+            maxSegmentationProcessMs = maxOf(maxSegmentationProcessMs, durationMs)
+        } else {
+            totalNormalProcessUs += durationUs
+            normalProcessSamples++
+            maxNormalProcessMs = maxOf(maxNormalProcessMs, durationMs)
+        }
     }
 
     private fun recordFrameGap() {
@@ -126,6 +163,11 @@ class BackgroundBlurProcessor(
         val segmentationStats = segmentationEngine.consumeStats()
         val avgRenderMs =
             if (outputFrames > 0) totalRenderMs.toFloat() / outputFrames.toFloat() else 0f
+        val avgProcessMs = averageMs(totalProcessUs, processSamples)
+        val avgNormalProcessMs = averageMs(totalNormalProcessUs, normalProcessSamples)
+        val avgSegmentationProcessMs =
+            averageMs(totalSegmentationProcessUs, segmentationProcessSamples)
+
         Log.i(
             TAG,
             "BlurPerformance: inputFps=${inputFrames / seconds}, " +
@@ -136,6 +178,12 @@ class BackgroundBlurProcessor(
                 "maxPreprocessMs=${segmentationStats.maxPreprocessingMs}, " +
                 "avgRenderMs=$avgRenderMs, droppedFrames=$droppedFrames, " +
                 "maxFrameGapMs=$maxFrameGapMs, frameGapSpikes=$frameGapSpikes, " +
+                "avgProcessMs=$avgProcessMs, maxProcessMs=$maxProcessMs, " +
+                "processSpikes=$processSpikes, " +
+                "avgNormalProcessMs=$avgNormalProcessMs, " +
+                "maxNormalProcessMs=$maxNormalProcessMs, " +
+                "avgSegmentationProcessMs=$avgSegmentationProcessMs, " +
+                "maxSegmentationProcessMs=$maxSegmentationProcessMs, " +
                 "thread=${Thread.currentThread().name}",
         )
 
@@ -143,14 +191,28 @@ class BackgroundBlurProcessor(
         outputFrames = 0
         droppedFrames = 0
         totalRenderMs = 0
+        totalProcessUs = 0
+        processSamples = 0
+        maxProcessMs = 0f
+        processSpikes = 0
+        totalNormalProcessUs = 0
+        normalProcessSamples = 0
+        maxNormalProcessMs = 0f
+        totalSegmentationProcessUs = 0
+        segmentationProcessSamples = 0
+        maxSegmentationProcessMs = 0f
         maxFrameGapMs = 0f
         frameGapSpikes = 0
         lastStatsLogMs = now
     }
 
+    private fun averageMs(totalUs: Long, samples: Int): Float =
+        if (samples > 0) totalUs.toFloat() / samples.toFloat() / 1_000f else 0f
+
     companion object {
         private const val TAG = "SystemCall.BackgroundBlur"
         private const val STATS_INTERVAL_MS = 4_000L
         private const val FRAME_GAP_SPIKE_THRESHOLD_MS = 50f
+        private const val PROCESS_SPIKE_THRESHOLD_MS = 8f
     }
 }
