@@ -15,6 +15,7 @@ export type RootStackParamList = {
     cameraEnabled: boolean;
     microphoneEnabled: boolean;
     cameraFacingMode: 'user' | 'environment';
+    backgroundBlurEnabled: boolean;
   };
   Call: {
     roomName: string;
@@ -22,5 +23,6 @@ export type RootStackParamList = {
     cameraEnabled: boolean;
     microphoneEnabled: boolean;
     cameraFacingMode: 'user' | 'environment';
+    backgroundBlurEnabled: boolean;
   };
 };
