@@ -14,7 +14,8 @@ import {
   useTracks,
   VideoTrack,
 } from '@livekit/react-native';
-import {Track} from 'livekit-client';
+import {Track, type LocalVideoTrack} from 'livekit-client';
+import {LocalPreview} from './LocalPreview';
 import {MediaToggle} from './MediaToggle';
 import {ParticipantGrid} from './ParticipantGrid';
 import {PrimaryButton} from '../PrimaryButton';
@@ -26,6 +27,8 @@ type Props = {
   desiredMicrophoneEnabled: boolean;
   desiredCameraEnabled: boolean;
   cameraFacingMode: FacingMode;
+  diagnosticPreviewTrack?: LocalVideoTrack | null;
+  diagnosticPreviewEnabled?: boolean;
   onMicrophoneChange: (enabled: boolean) => Promise<void>;
   onCameraChange: (enabled: boolean) => Promise<void>;
   onSwitchCamera: () => Promise<void>;
@@ -38,6 +41,8 @@ export function CallScreenContent({
   desiredMicrophoneEnabled,
   desiredCameraEnabled,
   cameraFacingMode,
+  diagnosticPreviewTrack,
+  diagnosticPreviewEnabled = false,
   onMicrophoneChange,
   onCameraChange,
   onSwitchCamera,
@@ -54,7 +59,14 @@ export function CallScreenContent({
   const mediaIsSynchronizing =
     status === 'Подключение…' || status === 'Переподключение…';
 
-  const localPreview = (
+  const localPreview = diagnosticPreviewTrack ? (
+    <View style={isInPipMode ? s.pipPreview : s.selfView}>
+      <LocalPreview
+        track={diagnosticPreviewTrack}
+        enabled={diagnosticPreviewEnabled}
+      />
+    </View>
+  ) : (
     <View style={isInPipMode ? s.pipPreview : s.selfView}>
       {desiredCameraEnabled && localCamera && isTrackReference(localCamera) ? (
         <VideoTrack trackRef={localCamera} style={s.selfVideo} />
@@ -95,20 +107,26 @@ export function CallScreenContent({
           <MediaToggle
             label="Камера"
             active={
-              mediaIsSynchronizing ? desiredCameraEnabled : isCameraEnabled
+              diagnosticPreviewTrack
+                ? diagnosticPreviewEnabled
+                : mediaIsSynchronizing
+                  ? desiredCameraEnabled
+                  : isCameraEnabled
             }
             icon={
-              desiredCameraEnabled ? (
-                <VideoCameraIcon size={18} color="#fff" />
-              ) : (
-                <VideoCameraSlashIcon size={18} color="#fff" />
-              )
+              diagnosticPreviewTrack
+                ? diagnosticPreviewEnabled
+                  ? <VideoCameraIcon size={18} color="#fff" />
+                  : <VideoCameraSlashIcon size={18} color="#fff" />
+                : desiredCameraEnabled
+                  ? <VideoCameraIcon size={18} color="#fff" />
+                  : <VideoCameraSlashIcon size={18} color="#fff" />
             }
             onPress={() => void onCameraChange(!desiredCameraEnabled)}
           />
           <MediaToggle
             label={cameraFacingMode === 'user' ? 'Фронт' : 'Основа'}
-            active={desiredCameraEnabled}
+            active={diagnosticPreviewTrack ? diagnosticPreviewEnabled : desiredCameraEnabled}
             icon={<ArrowsRightLeftIcon size={18} color="#fff" />}
             onPress={() => void onSwitchCamera()}
           />
