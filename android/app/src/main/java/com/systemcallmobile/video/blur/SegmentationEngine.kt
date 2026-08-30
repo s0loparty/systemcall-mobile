@@ -45,11 +45,8 @@ class SegmentationEngine {
         if (!running.compareAndSet(false, true)) return
         lastStartMs.set(now)
 
-        // The old implementation synchronously did cropAndScale -> toI420 ->
-        // I420-to-Bitmap on the camera CaptureThread. That creates a periodic
-        // capture stall every segmentation interval, which is especially visible
-        // in the unbuffered local preview. Keep the frame alive and move that work
-        // to a dedicated worker instead.
+        // Keep preprocessing away from CaptureThread. Retain the source frame
+        // until the worker has finished crop/scale and I420 conversion.
         frame.retain()
         preprocessingExecutor.execute {
             val preprocessingStartedAtNs = System.nanoTime()
@@ -200,8 +197,8 @@ class SegmentationEngine {
 
     companion object {
         private const val TAG = "SystemCall.Segmentation"
-        private const val SEGMENTATION_MAX_SIDE = 256
-        private const val SEGMENTATION_INTERVAL_MS = 125L
+        private const val SEGMENTATION_MAX_SIDE = 192
+        private const val SEGMENTATION_INTERVAL_MS = 160L
     }
 }
 
