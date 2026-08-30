@@ -26,8 +26,11 @@ class FramePacingDiagnosticsProcessor : VideoFrameProcessor {
 
         maybeLogStats()
 
-        // Pure pass-through diagnostic. Do not touch pixels, convert formats,
-        // allocate textures, or run segmentation.
+        // VideoEffectProcessor releases both the processor output and its retained
+        // input frame after forwarding to the sink. Because this diagnostics
+        // processor returns the exact same VideoFrame instance, retain once more
+        // so those two releases stay balanced.
+        frame.retain()
         return frame
     }
 
