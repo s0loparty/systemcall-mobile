@@ -84,7 +84,8 @@ export function WaitingRoomScreen({route, navigation}: Props) {
           <Text style={s.message}>{message}</Text>
           {!rejected ? (
             <Text style={s.hint}>
-              Оставьте этот экран открытым. После подтверждения вы автоматически войдёте в звонок.
+              Оставьте этот экран открытым. После подтверждения вы автоматически
+              войдёте в звонок.
             </Text>
           ) : null}
         </View>
@@ -104,5 +105,11 @@ const s = StyleSheet.create({
   content: {flex: 1, alignItems: 'center', justifyContent: 'center', gap: 16},
   title: {color: '#fff', fontSize: 26, fontWeight: '800', textAlign: 'center'},
   message: {color: '#d0d0d0', fontSize: 17, textAlign: 'center'},
-  hint: {color: '#777', fontSize: 14, lineHeight: 20, textAlign: 'center', maxWidth: 320},
+  hint: {
+    color: '#777',
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'center',
+    maxWidth: 320,
+  },
 });

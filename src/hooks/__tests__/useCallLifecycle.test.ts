@@ -15,10 +15,10 @@ jest.mock('@livekit/react-native', () => ({
   },
 }));
 
-const {
-  useCallLifecycle,
-} = require('../useCallLifecycle') as typeof import('../useCallLifecycle');
-type UseCallLifecycleResult = import('../useCallLifecycle').UseCallLifecycleResult;
+const {useCallLifecycle} =
+  require('../useCallLifecycle') as typeof import('../useCallLifecycle');
+type UseCallLifecycleResult =
+  import('../useCallLifecycle').UseCallLifecycleResult;
 
 type Listener = (...args: unknown[]) => void;
 
@@ -31,7 +31,9 @@ type FakeRoom = {
   connect: jest.Mock<Promise<void>, [string, string]>;
   disconnect: jest.Mock<Promise<void>, [boolean?]>;
   localParticipant: {
-    getTrackPublication: (source: Track.Source) => {track?: FakeTrack} | undefined;
+    getTrackPublication: (
+      source: Track.Source,
+    ) => {track?: FakeTrack} | undefined;
     setCameraEnabled: jest.Mock<Promise<void>, [boolean, unknown?]>;
     setMicrophoneEnabled: jest.Mock<Promise<void>, [boolean]>;
     republishAllTracks: jest.Mock<Promise<void>, [unknown?, boolean?]>;
@@ -107,7 +109,9 @@ function createFakeRoom(initialState: ConnectionState): FakeRoom {
 function createFakeAppState(
   initialState: 'active' | 'background' | 'inactive' = 'active',
 ) {
-  const listeners = new Set<(state: 'active' | 'background' | 'inactive') => void>();
+  const listeners = new Set<
+    (state: 'active' | 'background' | 'inactive') => void
+  >();
 
   return {
     currentState: initialState,
@@ -223,8 +227,12 @@ describe('useCallLifecycle', () => {
     expect(room.localParticipant.setCameraEnabled).toHaveBeenCalledWith(true, {
       facingMode: 'user',
     });
-    expect(room.localParticipant.setMicrophoneEnabled).toHaveBeenCalledWith(false);
-    expect(room.localParticipant.setMicrophoneEnabled).toHaveBeenCalledWith(true);
+    expect(room.localParticipant.setMicrophoneEnabled).toHaveBeenCalledWith(
+      false,
+    );
+    expect(room.localParticipant.setMicrophoneEnabled).toHaveBeenCalledWith(
+      true,
+    );
   });
 
   it('marks status reconnecting on foreground when room is reconnecting and does not start second connect', async () => {
@@ -282,7 +290,9 @@ describe('useCallLifecycle', () => {
     expect(deps.loggerFactory).toHaveBeenCalled();
     expect(deps.logger.setLevel).toHaveBeenCalledWith(LogLevel.silent);
     expect(room.localParticipant.setCameraEnabled).toHaveBeenCalledWith(false);
-    expect(room.localParticipant.setMicrophoneEnabled).toHaveBeenCalledWith(false);
+    expect(room.localParticipant.setMicrophoneEnabled).toHaveBeenCalledWith(
+      false,
+    );
     expect(room.disconnect).toHaveBeenCalledWith(true);
     expect(deps.onLeaveComplete).toHaveBeenCalled();
   });

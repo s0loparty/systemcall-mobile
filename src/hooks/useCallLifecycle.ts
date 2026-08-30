@@ -27,7 +27,10 @@ type CallRouteParams = RootStackParamList['Call'];
 
 type CallLifecycleDeps = {
   appState?: Pick<typeof AppState, 'currentState' | 'addEventListener'>;
-  audioSession?: Pick<typeof AudioSession, 'startAudioSession' | 'stopAudioSession'>;
+  audioSession?: Pick<
+    typeof AudioSession,
+    'startAudioSession' | 'stopAudioSession'
+  >;
   backgroundCall?: Pick<typeof backgroundCall, 'start' | 'stop'>;
   createRoom?: () => Room;
   loggerFactory?: typeof getLogger;
@@ -48,7 +51,8 @@ export type UseCallLifecycleResult = {
 };
 
 const CALL_LOGGER_NAME = 'systemcall-mobile-call';
-const waitForMs = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const waitForMs = (ms: number) =>
+  new Promise(resolve => setTimeout(resolve, ms));
 
 export function useCallLifecycle(
   routeParams: CallRouteParams,
@@ -120,12 +124,16 @@ export function useCallLifecycle(
   }, []);
 
   const getCameraTrack = useCallback(() => {
-    const publication = room.localParticipant.getTrackPublication(Track.Source.Camera);
+    const publication = room.localParticipant.getTrackPublication(
+      Track.Source.Camera,
+    );
     return publication?.track as LocalVideoTrack | undefined;
   }, [room]);
 
   const getMicrophoneTrack = useCallback(() => {
-    const publication = room.localParticipant.getTrackPublication(Track.Source.Microphone);
+    const publication = room.localParticipant.getTrackPublication(
+      Track.Source.Microphone,
+    );
     return publication?.track as LocalAudioTrack | undefined;
   }, [room]);
 
@@ -134,7 +142,8 @@ export function useCallLifecycle(
     try {
       await audioSession.startAudioSession();
     } catch (error) {
-      if (!leaving.current) console.warn('LiveKit audio session resume failed', error);
+      if (!leaving.current)
+        console.warn('LiveKit audio session resume failed', error);
     }
   }, [audioSession]);
 
@@ -146,7 +155,8 @@ export function useCallLifecycle(
         microphoneEnabled: desiredMicrophoneRef.current,
       });
     } catch (error) {
-      if (!leaving.current) console.warn('Background call service resume failed', error);
+      if (!leaving.current)
+        console.warn('Background call service resume failed', error);
     }
   }, [backgroundCallApi]);
 
@@ -165,101 +175,148 @@ export function useCallLifecycle(
     }
   }, [applyBlurToCamera, getCameraTrack]);
 
-  const restoreMicrophone = useCallback(async (forceRecreate = false) => {
-    if (leaving.current) return;
-    if (!desiredMicrophoneRef.current) {
-      await room.localParticipant.setMicrophoneEnabled(false);
-      return;
-    }
-    if (forceRecreate) {
-      const now = Date.now();
-      if (now - lastForcedMicrophoneRecoveryAt.current < 1200) return;
-      lastForcedMicrophoneRecoveryAt.current = now;
-      await room.localParticipant.setMicrophoneEnabled(false);
-      await wait(150);
+  const restoreMicrophone = useCallback(
+    async (forceRecreate = false) => {
       if (leaving.current) return;
-    }
-    const track = getMicrophoneTrack();
-    if (forceRecreate && track) {
-      try { await track.restartTrack(); } catch (error) { console.warn('LiveKit microphone restart failed', error); }
-    }
-    await room.localParticipant.setMicrophoneEnabled(true);
-  }, [getMicrophoneTrack, room, wait]);
-
-  const restoreCamera = useCallback(async (forceRecreate = false) => {
-    if (leaving.current) return;
-    if (!desiredCameraRef.current) {
-      await room.localParticipant.setCameraEnabled(false);
-      return;
-    }
-    if (forceRecreate) {
-      const now = Date.now();
-      if (now - lastForcedCameraRecoveryAt.current < 2500) return;
-      lastForcedCameraRecoveryAt.current = now;
-      await room.localParticipant.setCameraEnabled(false);
-      await wait(250);
-      if (leaving.current) return;
-    }
-    await room.localParticipant.setCameraEnabled(true, {facingMode: cameraFacingModeRef.current});
-    applyBlurToCamera();
-  }, [applyBlurToCamera, room, wait]);
-
-  const syncDesiredMedia = useCallback(async (forceRecovery = false) => {
-    if (leaving.current || restoringMedia.current || room.state !== ConnectionState.Connected) return;
-    restoringMedia.current = true;
-    try {
-      await ensureAudioSession();
-      await ensureForegroundService();
-      if (forceRecovery) {
-        const hasPublishedTracks = !!getCameraTrack() || !!getMicrophoneTrack();
-        if (hasPublishedTracks) {
-          await room.localParticipant.republishAllTracks(undefined, true);
-          await wait(200);
+      if (!desiredMicrophoneRef.current) {
+        await room.localParticipant.setMicrophoneEnabled(false);
+        return;
+      }
+      if (forceRecreate) {
+        const now = Date.now();
+        if (now - lastForcedMicrophoneRecoveryAt.current < 1200) return;
+        lastForcedMicrophoneRecoveryAt.current = now;
+        await room.localParticipant.setMicrophoneEnabled(false);
+        await wait(150);
+        if (leaving.current) return;
+      }
+      const track = getMicrophoneTrack();
+      if (forceRecreate && track) {
+        try {
+          await track.restartTrack();
+        } catch (error) {
+          console.warn('LiveKit microphone restart failed', error);
         }
       }
-      await restoreMicrophone(forceRecovery);
-      if (!leaving.current) await restoreCamera(forceRecovery);
-    } catch (error) {
-      if (!leaving.current) console.warn('LiveKit local media restore failed', error);
-    } finally {
-      restoringMedia.current = false;
-    }
-  }, [ensureAudioSession, ensureForegroundService, getCameraTrack, getMicrophoneTrack, restoreCamera, restoreMicrophone, room, wait]);
+      await room.localParticipant.setMicrophoneEnabled(true);
+    },
+    [getMicrophoneTrack, room, wait],
+  );
 
-  const connectRoom = useCallback(async (recovering = false) => {
-    if (leaving.current || connecting.current) return;
-    if (room.state === ConnectionState.Reconnecting || room.state === ConnectionState.SignalReconnecting) {
-      setStatus('Переподключение…');
-      return;
-    }
-    if (room.state === ConnectionState.Connected) {
-      await syncDesiredMedia(recovering);
-      return;
-    }
-    connecting.current = true;
-    setStatus(recovering ? 'Переподключение…' : 'Подключение…');
-    try {
-      await ensureAudioSession();
-      await room.connect(routeParams.livekit.url, routeParams.livekit.token);
-    } catch (error) {
-      if (!leaving.current) {
-        console.warn('LiveKit connect failed', error);
-        setStatus('Соединение потеряно');
+  const restoreCamera = useCallback(
+    async (forceRecreate = false) => {
+      if (leaving.current) return;
+      if (!desiredCameraRef.current) {
+        await room.localParticipant.setCameraEnabled(false);
+        return;
       }
-    } finally {
-      connecting.current = false;
-    }
-  }, [ensureAudioSession, room, routeParams.livekit.token, routeParams.livekit.url, syncDesiredMedia]);
+      if (forceRecreate) {
+        const now = Date.now();
+        if (now - lastForcedCameraRecoveryAt.current < 2500) return;
+        lastForcedCameraRecoveryAt.current = now;
+        await room.localParticipant.setCameraEnabled(false);
+        await wait(250);
+        if (leaving.current) return;
+      }
+      await room.localParticipant.setCameraEnabled(true, {
+        facingMode: cameraFacingModeRef.current,
+      });
+      applyBlurToCamera();
+    },
+    [applyBlurToCamera, room, wait],
+  );
+
+  const syncDesiredMedia = useCallback(
+    async (forceRecovery = false) => {
+      if (
+        leaving.current ||
+        restoringMedia.current ||
+        room.state !== ConnectionState.Connected
+      )
+        return;
+      restoringMedia.current = true;
+      try {
+        await ensureAudioSession();
+        await ensureForegroundService();
+        if (forceRecovery) {
+          const hasPublishedTracks =
+            !!getCameraTrack() || !!getMicrophoneTrack();
+          if (hasPublishedTracks) {
+            await room.localParticipant.republishAllTracks(undefined, true);
+            await wait(200);
+          }
+        }
+        await restoreMicrophone(forceRecovery);
+        if (!leaving.current) await restoreCamera(forceRecovery);
+      } catch (error) {
+        if (!leaving.current)
+          console.warn('LiveKit local media restore failed', error);
+      } finally {
+        restoringMedia.current = false;
+      }
+    },
+    [
+      ensureAudioSession,
+      ensureForegroundService,
+      getCameraTrack,
+      getMicrophoneTrack,
+      restoreCamera,
+      restoreMicrophone,
+      room,
+      wait,
+    ],
+  );
+
+  const connectRoom = useCallback(
+    async (recovering = false) => {
+      if (leaving.current || connecting.current) return;
+      if (
+        room.state === ConnectionState.Reconnecting ||
+        room.state === ConnectionState.SignalReconnecting
+      ) {
+        setStatus('Переподключение…');
+        return;
+      }
+      if (room.state === ConnectionState.Connected) {
+        await syncDesiredMedia(recovering);
+        return;
+      }
+      connecting.current = true;
+      setStatus(recovering ? 'Переподключение…' : 'Подключение…');
+      try {
+        await ensureAudioSession();
+        await room.connect(routeParams.livekit.url, routeParams.livekit.token);
+      } catch (error) {
+        if (!leaving.current) {
+          console.warn('LiveKit connect failed', error);
+          setStatus('Соединение потеряно');
+        }
+      } finally {
+        connecting.current = false;
+      }
+    },
+    [
+      ensureAudioSession,
+      room,
+      routeParams.livekit.token,
+      routeParams.livekit.url,
+      syncDesiredMedia,
+    ],
+  );
 
   const handleAppForeground = useCallback(async () => {
     if (leaving.current) return;
-    if (room.state === ConnectionState.Reconnecting || room.state === ConnectionState.SignalReconnecting) {
+    if (
+      room.state === ConnectionState.Reconnecting ||
+      room.state === ConnectionState.SignalReconnecting
+    ) {
       setStatus('Переподключение…');
       return;
     }
     if (room.state === ConnectionState.Connected) {
       await wait(1200);
-      if (!leaving.current && room.state === ConnectionState.Connected) await syncDesiredMedia(true);
+      if (!leaving.current && room.state === ConnectionState.Connected)
+        await syncDesiredMedia(true);
       return;
     }
     if (room.state === ConnectionState.Disconnected) await connectRoom(true);
@@ -268,27 +325,61 @@ export function useCallLifecycle(
   const releaseLocalMedia = useCallback(async () => {
     const cameraTrack = getCameraTrack();
     if (cameraTrack && routeParams.backgroundBlurEnabled) {
-      try { applyBackgroundBlur(cameraTrack, false); } catch {}
+      try {
+        applyBackgroundBlur(cameraTrack, false);
+      } catch {}
     }
     await Promise.all([
-      room.localParticipant.setCameraEnabled(false).catch(error => console.warn('LiveKit camera release failed', error)),
-      room.localParticipant.setMicrophoneEnabled(false).catch(error => console.warn('LiveKit microphone release failed', error)),
+      room.localParticipant
+        .setCameraEnabled(false)
+        .catch(error => console.warn('LiveKit camera release failed', error)),
+      room.localParticipant
+        .setMicrophoneEnabled(false)
+        .catch(error =>
+          console.warn('LiveKit microphone release failed', error),
+        ),
     ]);
-  }, [applyBackgroundBlur, getCameraTrack, room, routeParams.backgroundBlurEnabled]);
+  }, [
+    applyBackgroundBlur,
+    getCameraTrack,
+    room,
+    routeParams.backgroundBlurEnabled,
+  ]);
 
   const leaveCall = useCallback(async () => {
     if (leaving.current) return;
     leaving.current = true;
     clearScheduledWork();
-    try { await releaseLocalMedia(); } catch {}
+    try {
+      await releaseLocalMedia();
+    } catch {}
     try {
       loggerFactory(CALL_LOGGER_NAME).setLevel(LogLevel.silent);
-      if (room.state !== ConnectionState.Disconnected) await room.disconnect(true);
-    } catch (error) { console.warn('LiveKit graceful disconnect failed', error); }
-    try { await backgroundCallApi.stop(); } catch (error) { console.warn('Background call service stop failed', error); }
-    try { await audioSession.stopAudioSession(); } catch (error) { console.warn('LiveKit audio session stop failed', error); }
+      if (room.state !== ConnectionState.Disconnected)
+        await room.disconnect(true);
+    } catch (error) {
+      console.warn('LiveKit graceful disconnect failed', error);
+    }
+    try {
+      await backgroundCallApi.stop();
+    } catch (error) {
+      console.warn('Background call service stop failed', error);
+    }
+    try {
+      await audioSession.stopAudioSession();
+    } catch (error) {
+      console.warn('LiveKit audio session stop failed', error);
+    }
     onLeaveComplete();
-  }, [audioSession, backgroundCallApi, clearScheduledWork, loggerFactory, onLeaveComplete, releaseLocalMedia, room]);
+  }, [
+    audioSession,
+    backgroundCallApi,
+    clearScheduledWork,
+    loggerFactory,
+    onLeaveComplete,
+    releaseLocalMedia,
+    room,
+  ]);
 
   useEffect(() => {
     loggerFactory(CALL_LOGGER_NAME).setLevel(LogLevel.info);
@@ -303,9 +394,14 @@ export function useCallLifecycle(
       setStatus('В звонке');
       schedule(() => void syncDesiredMedia(true), 900);
     };
-    const handleReconnecting = () => { if (!leaving.current) setStatus('Переподключение…'); };
-    const handleDisconnected = () => { if (!leaving.current) setStatus('Соединение потеряно'); };
-    room.on(RoomEvent.Connected, handleConnected)
+    const handleReconnecting = () => {
+      if (!leaving.current) setStatus('Переподключение…');
+    };
+    const handleDisconnected = () => {
+      if (!leaving.current) setStatus('Соединение потеряно');
+    };
+    room
+      .on(RoomEvent.Connected, handleConnected)
       .on(RoomEvent.Reconnected, handleReconnected)
       .on(RoomEvent.Reconnecting, handleReconnecting)
       .on(RoomEvent.SignalReconnecting, handleReconnecting)
@@ -314,7 +410,11 @@ export function useCallLifecycle(
     const subscription = appStateApi.addEventListener('change', nextState => {
       const previousState = appState.current;
       appState.current = nextState;
-      if (!leaving.current && nextState === 'active' && (previousState === 'background' || previousState === 'inactive')) {
+      if (
+        !leaving.current &&
+        nextState === 'active' &&
+        (previousState === 'background' || previousState === 'inactive')
+      ) {
         schedule(() => void handleAppForeground(), 500);
       }
     });
@@ -322,47 +422,87 @@ export function useCallLifecycle(
       leaving.current = true;
       clearScheduledWork();
       subscription.remove();
-      room.off(RoomEvent.Connected, handleConnected)
+      room
+        .off(RoomEvent.Connected, handleConnected)
         .off(RoomEvent.Reconnected, handleReconnected)
         .off(RoomEvent.Reconnecting, handleReconnecting)
         .off(RoomEvent.SignalReconnecting, handleReconnecting)
         .off(RoomEvent.Disconnected, handleDisconnected);
       void releaseLocalMedia().catch(() => undefined);
-      void backgroundCallApi.stop().catch(error => console.warn('Background call service stop failed', error));
-      void audioSession.stopAudioSession().catch(error => console.warn('LiveKit audio session stop failed', error));
+      void backgroundCallApi
+        .stop()
+        .catch(error =>
+          console.warn('Background call service stop failed', error),
+        );
+      void audioSession
+        .stopAudioSession()
+        .catch(error =>
+          console.warn('LiveKit audio session stop failed', error),
+        );
       if (room.state !== ConnectionState.Disconnected) {
-        void room.disconnect(true).catch(error => console.warn('LiveKit cleanup disconnect failed', error));
+        void room
+          .disconnect(true)
+          .catch(error =>
+            console.warn('LiveKit cleanup disconnect failed', error),
+          );
       }
     };
-  }, [appStateApi, audioSession, backgroundCallApi, clearScheduledWork, connectRoom, handleAppForeground, loggerFactory, releaseLocalMedia, room, schedule, syncDesiredMedia]);
+  }, [
+    appStateApi,
+    audioSession,
+    backgroundCallApi,
+    clearScheduledWork,
+    connectRoom,
+    handleAppForeground,
+    loggerFactory,
+    releaseLocalMedia,
+    room,
+    schedule,
+    syncDesiredMedia,
+  ]);
 
-  const changeMicrophone = useCallback(async (enabled: boolean) => {
-    if (leaving.current) return;
-    desiredMicrophoneRef.current = enabled;
-    setDesiredMicrophoneEnabled(enabled);
-    try {
-      if (enabled) await restoreMicrophone(true);
-      else await room.localParticipant.setMicrophoneEnabled(false);
-    } catch (error) { console.warn('LiveKit microphone toggle failed', error); }
-  }, [restoreMicrophone, room]);
+  const changeMicrophone = useCallback(
+    async (enabled: boolean) => {
+      if (leaving.current) return;
+      desiredMicrophoneRef.current = enabled;
+      setDesiredMicrophoneEnabled(enabled);
+      try {
+        if (enabled) await restoreMicrophone(true);
+        else await room.localParticipant.setMicrophoneEnabled(false);
+      } catch (error) {
+        console.warn('LiveKit microphone toggle failed', error);
+      }
+    },
+    [restoreMicrophone, room],
+  );
 
-  const changeCamera = useCallback(async (enabled: boolean) => {
-    if (leaving.current) return;
-    desiredCameraRef.current = enabled;
-    setDesiredCameraEnabled(enabled);
-    try {
-      if (enabled) await restoreCamera(true);
-      else await room.localParticipant.setCameraEnabled(false);
-    } catch (error) { console.warn('LiveKit camera toggle failed', error); }
-  }, [restoreCamera, room]);
+  const changeCamera = useCallback(
+    async (enabled: boolean) => {
+      if (leaving.current) return;
+      desiredCameraRef.current = enabled;
+      setDesiredCameraEnabled(enabled);
+      try {
+        if (enabled) await restoreCamera(true);
+        else await room.localParticipant.setCameraEnabled(false);
+      } catch (error) {
+        console.warn('LiveKit camera toggle failed', error);
+      }
+    },
+    [restoreCamera, room],
+  );
 
   const switchCamera = useCallback(async () => {
     if (leaving.current) return;
-    const next: FacingMode = cameraFacingModeRef.current === 'user' ? 'environment' : 'user';
+    const next: FacingMode =
+      cameraFacingModeRef.current === 'user' ? 'environment' : 'user';
     cameraFacingModeRef.current = next;
     setCameraFacingMode(next);
     if (!desiredCameraRef.current) return;
-    try { await applyCameraFacingMode(); } catch (error) { console.warn('LiveKit camera switch failed', error); }
+    try {
+      await applyCameraFacingMode();
+    } catch (error) {
+      console.warn('LiveKit camera switch failed', error);
+    }
   }, [applyCameraFacingMode]);
 
   return {

@@ -23,7 +23,8 @@ export function setBackgroundBlur(
     return;
   }
 
-  const mediaTrack = track.mediaStreamTrack as unknown as VideoEffectsMediaTrack;
+  const mediaTrack =
+    track.mediaStreamTrack as unknown as VideoEffectsMediaTrack;
 
   if (typeof mediaTrack._setVideoEffects !== 'function') {
     if (enabled) {

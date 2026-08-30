@@ -41,7 +41,9 @@ export function PreJoinScreen({route, navigation}: Props) {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [previewTrack, setPreviewTrack] = useState<LocalVideoTrack | null>(null);
+  const [previewTrack, setPreviewTrack] = useState<LocalVideoTrack | null>(
+    null,
+  );
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const previewTrackRef = useRef<LocalVideoTrack | null>(null);
 
@@ -148,7 +150,9 @@ export function PreJoinScreen({route, navigation}: Props) {
       setBackgroundBlurEnabled(enabled);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Не удалось включить размытие фона.');
+      setError(
+        e instanceof Error ? e.message : 'Не удалось включить размытие фона.',
+      );
     }
   }, [backgroundBlur]);
 
@@ -272,11 +276,15 @@ export function PreJoinScreen({route, navigation}: Props) {
               onPress={toggleBackgroundBlur}
               style={s.blurOption}>
               <View style={[s.checkbox, backgroundBlur && s.checkboxChecked]}>
-                {backgroundBlur ? <CheckIcon size={14} color="#0b0b0b" /> : null}
+                {backgroundBlur ? (
+                  <CheckIcon size={14} color="#0b0b0b" />
+                ) : null}
               </View>
               <View style={s.blurCopy}>
                 <Text style={s.blurTitle}>Размыть фон</Text>
-                <Text style={s.blurHint}>Эффект виден в превью и участникам звонка</Text>
+                <Text style={s.blurHint}>
+                  Эффект виден в превью и участникам звонка
+                </Text>
               </View>
             </Pressable>
             {error ? <Text style={s.error}>{error}</Text> : null}
