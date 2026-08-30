@@ -5,6 +5,8 @@ import android.util.Log
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.segmentation.Segmentation
 import com.google.mlkit.vision.segmentation.selfie.SelfieSegmenterOptions
+import java.nio.ByteBuffer
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
@@ -16,6 +18,12 @@ class SegmentationEngine {
             .enableRawSizeMask()
             .build(),
     )
+    private val preprocessingExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "SystemCall-SegmentationPreprocess").apply {
+            priority = Thread.NORM_PRIORITY - 1
+            isDaemon = true
+        }
+    }
     private val running = AtomicBoolean(false)
     private val cachedMask = AtomicReference<SegmentationMask?>(null)
     private val lastStartMs = AtomicLong(0)
@@ -28,11 +36,6 @@ class SegmentationEngine {
 
     fun currentMask(): SegmentationMask? = cachedMask.get()
 
-    /**
-     * Returns true only when this frame should be sampled for segmentation.
-     * Sampling itself stays in the processor's current EGL context; ML Kit remains
-     * asynchronous and only one segmentation request can be in flight at a time.
-     */
     fun shouldSample(): Boolean {
         val now = System.currentTimeMillis()
         if (now - lastStartMs.get() < SEGMENTATION_INTERVAL_MS) return false
@@ -41,11 +44,35 @@ class SegmentationEngine {
         return true
     }
 
-    fun processSample(bitmap: Bitmap, preprocessingMs: Long) {
-        preprocessingCount.incrementAndGet()
-        totalPreprocessingMs.addAndGet(preprocessingMs)
-        updateMax(maxPreprocessingMs, preprocessingMs)
+    /**
+     * CaptureThread has already copied the tiny ready PBO into owned RGBA memory.
+     * Everything that does not require the current EGL context happens here:
+     * vertical flip/color conversion, Bitmap allocation and ML Kit submission.
+     */
+    fun processSample(sample: SegmentationRgbaSample, capturePreprocessingUs: Long) {
+        try {
+            preprocessingExecutor.execute {
+                val workerStartedAtNs = System.nanoTime()
+                val bitmap = try {
+                    rgbaToBitmap(sample)
+                } catch (error: Throwable) {
+                    running.set(false)
+                    Log.w(TAG, "Unable to convert segmentation RGBA sample", error)
+                    return@execute
+                }
 
+                val totalPreprocessingUs = capturePreprocessingUs +
+                    ((System.nanoTime() - workerStartedAtNs) / 1_000L)
+                recordPreprocessing(totalPreprocessingUs)
+                submitBitmap(bitmap)
+            }
+        } catch (error: Throwable) {
+            running.set(false)
+            Log.w(TAG, "Unable to schedule segmentation preprocessing", error)
+        }
+    }
+
+    private fun submitBitmap(bitmap: Bitmap) {
         val startedAtNs = System.nanoTime()
         try {
             segmenter.process(InputImage.fromBitmap(bitmap, 0))
@@ -90,6 +117,33 @@ class SegmentationEngine {
         }
     }
 
+    private fun rgbaToBitmap(sample: SegmentationRgbaSample): Bitmap {
+        val width = sample.width
+        val height = sample.height
+        val rgba: ByteBuffer = sample.rgba
+        val pixels = IntArray(width * height)
+        for (y in 0 until height) {
+            val sourceY = height - 1 - y
+            for (x in 0 until width) {
+                val offset = (sourceY * width + x) * RGBA_BYTES_PER_PIXEL
+                val r = rgba.get(offset).toInt() and 0xff
+                val g = rgba.get(offset + 1).toInt() and 0xff
+                val b = rgba.get(offset + 2).toInt() and 0xff
+                val a = rgba.get(offset + 3).toInt() and 0xff
+                pixels[y * width + x] =
+                    (a shl 24) or (r shl 16) or (g shl 8) or b
+            }
+        }
+        return Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888)
+    }
+
+    private fun recordPreprocessing(totalUs: Long) {
+        val durationMs = (totalUs / 1_000L).coerceAtLeast(0L)
+        preprocessingCount.incrementAndGet()
+        totalPreprocessingMs.addAndGet(durationMs)
+        updateMax(maxPreprocessingMs, durationMs)
+    }
+
     fun cancelSample() {
         running.set(false)
     }
@@ -122,6 +176,7 @@ class SegmentationEngine {
     companion object {
         private const val TAG = "SystemCall.Segmentation"
         private const val SEGMENTATION_INTERVAL_MS = 160L
+        private const val RGBA_BYTES_PER_PIXEL = 4
     }
 }
 
