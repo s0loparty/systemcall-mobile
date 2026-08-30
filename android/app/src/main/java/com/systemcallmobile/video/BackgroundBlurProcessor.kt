@@ -51,6 +51,9 @@ private class BackgroundBlurProcessor(
         } catch (error: Throwable) {
             Log.w(TAG, "Unable to convert camera frame to I420", error)
             return null
+        } ?: run {
+            Log.w(TAG, "Camera frame conversion returned null I420 buffer")
+            return null
         }
 
         try {
