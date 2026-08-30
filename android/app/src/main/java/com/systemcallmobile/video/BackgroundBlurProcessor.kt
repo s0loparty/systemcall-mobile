@@ -1,10 +1,7 @@
 package com.systemcallmobile.video
 
 import android.graphics.Bitmap
-import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.Paint
-import android.graphics.Rect
 import android.renderscript.Allocation
 import android.renderscript.Element
 import android.renderscript.RenderScript
@@ -19,8 +16,6 @@ import com.oney.WebRTCModule.videoEffects.VideoFrameProcessorFactoryInterface
 import org.webrtc.JavaI420Buffer
 import org.webrtc.SurfaceTextureHelper
 import org.webrtc.VideoFrame
-import org.webrtc.YuvConverter
-import java.nio.ByteBuffer
 import java.util.concurrent.TimeUnit
 import kotlin.math.max
 import kotlin.math.min
@@ -46,7 +41,6 @@ private class BackgroundBlurProcessor(
     private val blurScript = ScriptIntrinsicBlur.create(renderScript, Element.U8_4(renderScript)).apply {
         setRadius(18f)
     }
-    private val yuvConverter = YuvConverter()
     private var lastMask: FloatArray? = null
     private var lastMaskWidth = 0
     private var lastMaskHeight = 0
