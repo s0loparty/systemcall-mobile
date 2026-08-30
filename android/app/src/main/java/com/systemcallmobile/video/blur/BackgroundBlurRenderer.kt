@@ -39,34 +39,40 @@ class BackgroundBlurRenderer(
         val gl = getOrCreateResources()
         val width = frame.rotatedWidth
         val height = frame.rotatedHeight
-        ensureSize(gl, width, height)
+        if (!ensureSize(gl, width, height)) return null
         uploadMask(mask)
 
         val outputSlot = acquireOutputSlot(gl) ?: return null
+        val blurWidth = blurDimension(width)
+        val blurHeight = blurDimension(height)
 
         return try {
+            // Keep a full-resolution copy for the foreground/person layer.
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, gl.sourceBuffer.frameBufferId)
             GLES20.glViewport(0, 0, width, height)
             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
             gl.frameDrawer.drawFrame(frame, gl.inputDrawer, gl.textureMatrix, 0, 0, width, height)
 
+            // Blur at half resolution. Besides reducing GPU work, the downsample makes
+            // the same compact Gaussian kernel visibly stronger after it is upscaled
+            // during the final composite.
             drawBlurPass(
                 gl = gl,
                 sourceTextureId = gl.sourceBuffer.textureId,
                 targetFrameBufferId = gl.horizontalBlurBuffer.frameBufferId,
-                width = width,
-                height = height,
-                stepX = 1f / width.toFloat(),
+                width = blurWidth,
+                height = blurHeight,
+                stepX = BLUR_RADIUS_MULTIPLIER / blurWidth.toFloat(),
                 stepY = 0f,
             )
             drawBlurPass(
                 gl = gl,
                 sourceTextureId = gl.horizontalBlurBuffer.textureId,
                 targetFrameBufferId = gl.verticalBlurBuffer.frameBufferId,
-                width = width,
-                height = height,
+                width = blurWidth,
+                height = blurHeight,
                 stepX = 0f,
-                stepY = 1f / height.toFloat(),
+                stepY = BLUR_RADIUS_MULTIPLIER / blurHeight.toFloat(),
             )
             drawComposite(gl, outputSlot.buffer.frameBufferId, width, height)
 
@@ -120,22 +126,26 @@ class BackgroundBlurRenderer(
         }
     }
 
-    private fun ensureSize(gl: GlResources, width: Int, height: Int) {
-        if (width == currentWidth && height == currentHeight) return
+    private fun ensureSize(gl: GlResources, width: Int, height: Int): Boolean {
+        if (width == currentWidth && height == currentHeight) return true
 
         // Never resize a framebuffer whose texture can still be referenced by a
-        // downstream WebRTC sink. Resolution changes are rare, and the processor
-        // is expected to be recreated around capture changes. If a slot is busy,
-        // skip this frame instead of mutating an in-use texture.
-        if (gl.outputSlots.any { it.isInUse() }) return
+        // downstream WebRTC sink. Resolution changes are rare, so skip the frame
+        // instead of mutating an in-use output texture.
+        if (gl.outputSlots.any { it.isInUse() }) return false
 
+        val blurWidth = blurDimension(width)
+        val blurHeight = blurDimension(height)
         gl.sourceBuffer.setSize(width, height)
-        gl.horizontalBlurBuffer.setSize(width, height)
-        gl.verticalBlurBuffer.setSize(width, height)
+        gl.horizontalBlurBuffer.setSize(blurWidth, blurHeight)
+        gl.verticalBlurBuffer.setSize(blurWidth, blurHeight)
         gl.outputSlots.forEach { it.buffer.setSize(width, height) }
         currentWidth = width
         currentHeight = height
+        return true
     }
+
+    private fun blurDimension(value: Int): Int = (value / BLUR_DOWNSAMPLE).coerceAtLeast(1)
 
     private fun acquireOutputSlot(gl: GlResources): OutputTextureSlot? {
         for (slot in gl.outputSlots) {
@@ -252,6 +262,8 @@ class BackgroundBlurRenderer(
 
     companion object {
         private const val OUTPUT_POOL_SIZE = 3
+        private const val BLUR_DOWNSAMPLE = 2
+        private const val BLUR_RADIUS_MULTIPLIER = 2.0f
 
         private const val VERTEX_SHADER = """
             attribute vec4 aPosition;
@@ -291,7 +303,7 @@ class BackgroundBlurRenderer(
                 vec4 original = texture2D(uOriginalTexture, vTexCoord);
                 vec4 blurred = texture2D(uBlurredTexture, vTexCoord);
                 float confidence = texture2D(uMaskTexture, vec2(vTexCoord.x, 1.0 - vTexCoord.y)).r;
-                float person = smoothstep(0.42, 0.72, confidence);
+                float person = smoothstep(0.36, 0.76, confidence);
                 gl_FragColor = mix(blurred, original, person);
             }
         """
