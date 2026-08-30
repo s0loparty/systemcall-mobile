@@ -108,24 +108,23 @@ class BackgroundBlurProcessor(
         if (!segmentationEngine.shouldSample()) return false
 
         val startedAtNs = System.nanoTime()
-        val bitmap = try {
+        val sample = try {
             segmentationSampler.sample(frame)
         } catch (error: Throwable) {
             segmentationEngine.cancelSample()
             Log.w(TAG, "BlurDiagnostics: GPU segmentation sampling failed", error)
             return true
         }
-        val preprocessingMs = (System.nanoTime() - startedAtNs) / 1_000_000L
+        val capturePreprocessingUs = (System.nanoTime() - startedAtNs) / 1_000L
 
-        if (bitmap == null) {
-            // Async PBO path queued this frame but the previous GPU readback is not
-            // ready yet. Release the segmentation gate so a later frame can poll
-            // the fence without blocking CaptureThread.
+        if (sample == null) {
+            // Async PBO path queued this frame but no completed readback was ready.
+            // Release the gate so a later frame can poll without blocking capture.
             segmentationEngine.cancelSample()
             return true
         }
 
-        segmentationEngine.processSample(bitmap, preprocessingMs)
+        segmentationEngine.processSample(sample, capturePreprocessingUs)
         return true
     }
 
