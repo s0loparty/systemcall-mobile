@@ -19,6 +19,9 @@ class BackgroundBlurProcessor(
     private var firstFrameLogged = false
     private var firstMaskLogged = false
     private var firstOutputLogged = false
+    private var previousFrameArrivalNs = 0L
+    private var maxFrameGapMs = 0f
+    private var frameGapSpikes = 0
 
     init {
         Log.i(TAG, "BlurDiagnostics: processor created on thread=${Thread.currentThread().name}")
@@ -26,6 +29,7 @@ class BackgroundBlurProcessor(
 
     override fun process(frame: VideoFrame, textureHelper: SurfaceTextureHelper): VideoFrame? {
         return try {
+            recordFrameGap()
             inputFrames++
             if (!firstFrameLogged) {
                 firstFrameLogged = true
@@ -85,6 +89,18 @@ class BackgroundBlurProcessor(
         }
     }
 
+    private fun recordFrameGap() {
+        val nowNs = System.nanoTime()
+        if (previousFrameArrivalNs != 0L) {
+            val gapMs = (nowNs - previousFrameArrivalNs) / 1_000_000f
+            maxFrameGapMs = maxOf(maxFrameGapMs, gapMs)
+            if (gapMs >= FRAME_GAP_SPIKE_THRESHOLD_MS) {
+                frameGapSpikes++
+            }
+        }
+        previousFrameArrivalNs = nowNs
+    }
+
     private fun maybeLogStats() {
         val now = System.currentTimeMillis()
         val elapsedMs = now - lastStatsLogMs
@@ -103,6 +119,7 @@ class BackgroundBlurProcessor(
                 "avgPreprocessMs=${segmentationStats.averagePreprocessingMs}, " +
                 "maxPreprocessMs=${segmentationStats.maxPreprocessingMs}, " +
                 "avgRenderMs=$avgRenderMs, droppedFrames=$droppedFrames, " +
+                "maxFrameGapMs=$maxFrameGapMs, frameGapSpikes=$frameGapSpikes, " +
                 "thread=${Thread.currentThread().name}",
         )
 
@@ -110,11 +127,14 @@ class BackgroundBlurProcessor(
         outputFrames = 0
         droppedFrames = 0
         totalRenderMs = 0
+        maxFrameGapMs = 0f
+        frameGapSpikes = 0
         lastStatsLogMs = now
     }
 
     companion object {
         private const val TAG = "SystemCall.BackgroundBlur"
         private const val STATS_INTERVAL_MS = 4_000L
+        private const val FRAME_GAP_SPIKE_THRESHOLD_MS = 50f
     }
 }
