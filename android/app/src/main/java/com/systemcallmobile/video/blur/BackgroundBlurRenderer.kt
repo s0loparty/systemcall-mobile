@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Matrix
 import android.opengl.GLES20
 import android.os.Build
+import android.util.Log
 import org.webrtc.GlRectDrawer
 import org.webrtc.GlShader
 import org.webrtc.GlTextureFrameBuffer
@@ -30,6 +31,10 @@ class BackgroundBlurRenderer(
     private var uploadedMaskVersion = -1L
     private var currentWidth = 0
     private var currentHeight = 0
+    private var slotAcquireAttempts = 0
+    private var slotAcquireMisses = 0
+    private var maxBusySlots = 0
+    private var lastSlotStatsLogMs = System.currentTimeMillis()
 
     fun render(
         frame: VideoFrame,
@@ -148,10 +153,36 @@ class BackgroundBlurRenderer(
     private fun blurDimension(value: Int): Int = (value / BLUR_DOWNSAMPLE).coerceAtLeast(1)
 
     private fun acquireOutputSlot(gl: GlResources): OutputTextureSlot? {
+        slotAcquireAttempts++
+        val busyBeforeAcquire = gl.outputSlots.count { it.isInUse() }
+        maxBusySlots = maxOf(maxBusySlots, busyBeforeAcquire)
+
         for (slot in gl.outputSlots) {
-            if (slot.tryAcquire()) return slot
+            if (slot.tryAcquire()) {
+                maxBusySlots = maxOf(maxBusySlots, busyBeforeAcquire + 1)
+                maybeLogSlotStats()
+                return slot
+            }
         }
+
+        slotAcquireMisses++
+        maybeLogSlotStats()
         return null
+    }
+
+    private fun maybeLogSlotStats() {
+        val now = System.currentTimeMillis()
+        if (now - lastSlotStatsLogMs < SLOT_STATS_INTERVAL_MS) return
+
+        Log.i(
+            TAG,
+            "BlurTexturePool: size=$OUTPUT_POOL_SIZE, attempts=$slotAcquireAttempts, " +
+                "misses=$slotAcquireMisses, maxBusy=$maxBusySlots",
+        )
+        slotAcquireAttempts = 0
+        slotAcquireMisses = 0
+        maxBusySlots = 0
+        lastSlotStatsLogMs = now
     }
 
     private fun uploadMask(mask: SegmentationMask) {
@@ -261,9 +292,11 @@ class BackgroundBlurRenderer(
     }
 
     companion object {
-        private const val OUTPUT_POOL_SIZE = 3
+        private const val TAG = "SystemCall.BackgroundBlur"
+        private const val OUTPUT_POOL_SIZE = 6
+        private const val SLOT_STATS_INTERVAL_MS = 4_000L
         private const val BLUR_DOWNSAMPLE = 2
-        private const val BLUR_RADIUS_MULTIPLIER = 2.0f
+        private const val BLUR_RADIUS_MULTIPLIER = 3.0f
 
         private const val VERTEX_SHADER = """
             attribute vec4 aPosition;
