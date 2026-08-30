@@ -1,11 +1,7 @@
-import React, {useEffect, useMemo} from 'react';
+import React, {useEffect, useState} from 'react';
 import {StyleSheet, Text, View} from 'react-native';
-import {
-  RTCView,
-  MediaStream,
-  type MediaStreamTrack as ReactNativeMediaStreamTrack,
-} from '@livekit/react-native-webrtc';
-import type {LocalVideoTrack} from 'livekit-client';
+import {RTCView} from '@livekit/react-native-webrtc';
+import {TrackEvent, type LocalVideoTrack, type Track} from 'livekit-client';
 
 type Props = {
   track: LocalVideoTrack | null;
@@ -14,30 +10,34 @@ type Props = {
 };
 
 export function LocalPreview({track, enabled, compact = false}: Props) {
-  const stream = useMemo(() => {
-    if (!track) {
-      return null;
-    }
-
-    // livekit-client exposes the native WebRTC track through the DOM-style
-    // MediaStreamTrack type, while react-native-webrtc expects its own wrapper
-    // type. At runtime this is the same native track instance.
-    const nativeTrack =
-      track.mediaStreamTrack as unknown as ReactNativeMediaStreamTrack;
-
-    return new MediaStream([nativeTrack]);
-  }, [track]);
+  const [stream, setStream] = useState(track?.mediaStream ?? null);
 
   useEffect(() => {
-    return () => {
-      stream?.release();
+    setStream(track?.mediaStream ?? null);
+
+    if (!track) {
+      return;
+    }
+
+    // Match LiveKit's own React Native VideoTrack implementation: render the
+    // LocalVideoTrack-owned MediaStream instead of constructing/releasing a
+    // second MediaStream wrapper around mediaStreamTrack. Also refresh the
+    // stream when LiveKit restarts the native camera track.
+    const onRestarted = (restartedTrack: Track | null) => {
+      setStream(restartedTrack?.mediaStream ?? null);
     };
-  }, [stream]);
+
+    track.on(TrackEvent.Restarted, onRestarted);
+    return () => {
+      track.off(TrackEvent.Restarted, onRestarted);
+    };
+  }, [track]);
 
   return (
     <View style={[s.container, compact && s.compact]}>
       {enabled && stream ? (
         <RTCView
+          // LiveKit owns this MediaStream. Do not call release() from the view.
           streamURL={stream.toURL()}
           objectFit="cover"
           mirror
