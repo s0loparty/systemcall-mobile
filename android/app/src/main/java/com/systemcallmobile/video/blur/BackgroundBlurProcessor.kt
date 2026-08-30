@@ -100,6 +100,8 @@ class BackgroundBlurProcessor(
                 "outputFps=${outputFrames / seconds}, " +
                 "segmentationFps=${segmentationStats.completedCount / seconds}, " +
                 "avgSegmentationMs=${segmentationStats.averageDurationMs}, " +
+                "avgPreprocessMs=${segmentationStats.averagePreprocessingMs}, " +
+                "maxPreprocessMs=${segmentationStats.maxPreprocessingMs}, " +
                 "avgRenderMs=$avgRenderMs, droppedFrames=$droppedFrames, " +
                 "thread=${Thread.currentThread().name}",
         )
