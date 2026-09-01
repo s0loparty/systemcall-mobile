@@ -16,6 +16,15 @@ export function CallScreen({route, navigation}: Props) {
       new Room({
         adaptiveStream: true,
         dynacast: true,
+        publishDefaults: {
+          // Diagnostic A/B: publish a single 1080p layer with H.264 instead of
+          // LiveKit's default VP8. On Android this lets us check whether the
+          // device's H.264 encoder can handle high-quality publishing without
+          // starving the local preview/render pipeline.
+          simulcast: false,
+          videoCodec: 'h264',
+          degradationPreference: 'maintain-framerate',
+        },
         videoCaptureDefaults: getCameraCaptureOptions(
           route.params.cameraQualityPresetId,
           route.params.cameraFacingMode,

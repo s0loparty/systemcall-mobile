@@ -1,17 +1,15 @@
 package com.systemcallmobile.video.blur
 
 import android.graphics.Bitmap
-import android.graphics.Color
-import android.graphics.Matrix
 import android.util.Log
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.segmentation.Segmentation
 import com.google.mlkit.vision.segmentation.selfie.SelfieSegmenterOptions
-import org.webrtc.VideoFrame
+import java.nio.ByteBuffer
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
-import kotlin.math.max
 
 class SegmentationEngine {
     private val segmenter = Segmentation.getClient(
@@ -20,138 +18,171 @@ class SegmentationEngine {
             .enableRawSizeMask()
             .build(),
     )
+    private val preprocessingExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "SystemCall-SegmentationPreprocess").apply {
+            priority = Thread.NORM_PRIORITY - 1
+            isDaemon = true
+        }
+    }
     private val running = AtomicBoolean(false)
     private val cachedMask = AtomicReference<SegmentationMask?>(null)
     private val lastStartMs = AtomicLong(0)
     private val version = AtomicLong(0)
     private val completedCount = AtomicLong(0)
     private val totalDurationMs = AtomicLong(0)
+    private val preprocessingCount = AtomicLong(0)
+    private val totalPreprocessingMs = AtomicLong(0)
+    private val maxPreprocessingMs = AtomicLong(0)
 
     fun currentMask(): SegmentationMask? = cachedMask.get()
 
-    fun maybeStart(frame: VideoFrame) {
+    fun shouldSample(): Boolean {
         val now = System.currentTimeMillis()
-        if (now - lastStartMs.get() < SEGMENTATION_INTERVAL_MS) return
-        if (!running.compareAndSet(false, true)) return
+        if (now - lastStartMs.get() < SEGMENTATION_INTERVAL_MS) return false
+        if (!running.compareAndSet(false, true)) return false
         lastStartMs.set(now)
+        return true
+    }
 
-        val bitmap = try {
-            createSegmentationBitmap(frame)
+    /**
+     * CaptureThread has already copied the tiny ready PBO into owned RGBA memory.
+     * Everything that does not require the current EGL context happens here:
+     * vertical flip/color conversion, Bitmap allocation and ML Kit submission.
+     */
+    fun processSample(sample: SegmentationRgbaSample, capturePreprocessingUs: Long) {
+        try {
+            preprocessingExecutor.execute {
+                val workerStartedAtNs = System.nanoTime()
+                val bitmap = try {
+                    rgbaToBitmap(sample)
+                } catch (error: Throwable) {
+                    running.set(false)
+                    Log.w(TAG, "Unable to convert segmentation RGBA sample", error)
+                    return@execute
+                }
+
+                val totalPreprocessingUs = capturePreprocessingUs +
+                    ((System.nanoTime() - workerStartedAtNs) / 1_000L)
+                recordPreprocessing(totalPreprocessingUs)
+                submitBitmap(bitmap)
+            }
         } catch (error: Throwable) {
             running.set(false)
-            Log.w(TAG, "Unable to create segmentation input", error)
-            return
+            Log.w(TAG, "Unable to schedule segmentation preprocessing", error)
         }
+    }
 
+    private fun submitBitmap(bitmap: Bitmap) {
         val startedAtNs = System.nanoTime()
-        segmenter.process(InputImage.fromBitmap(bitmap, 0))
-            .addOnSuccessListener { result ->
-                try {
-                    val values = ByteArray(result.width * result.height)
-                    val buffer = result.buffer
-                    buffer.rewind()
-                    val floatBuffer = buffer.asFloatBuffer()
-                    for (index in values.indices) {
-                        val confidence = floatBuffer.get().coerceIn(0f, 1f)
-                        values[index] = (confidence * 255f).toInt().coerceIn(0, 255).toByte()
+        try {
+            segmenter.process(InputImage.fromBitmap(bitmap, 0))
+                .addOnSuccessListener { result ->
+                    try {
+                        val values = ByteArray(result.width * result.height)
+                        val buffer = result.buffer
+                        buffer.rewind()
+                        val floatBuffer = buffer.asFloatBuffer()
+                        for (index in values.indices) {
+                            val confidence = floatBuffer.get().coerceIn(0f, 1f)
+                            values[index] =
+                                (confidence * 255f).toInt().coerceIn(0, 255).toByte()
+                        }
+                        cachedMask.set(
+                            SegmentationMask(
+                                width = result.width,
+                                height = result.height,
+                                pixels = values,
+                                version = version.incrementAndGet(),
+                            ),
+                        )
+                    } catch (error: Throwable) {
+                        Log.w(TAG, "Unable to cache segmentation mask", error)
                     }
-                    cachedMask.set(
-                        SegmentationMask(
-                            width = result.width,
-                            height = result.height,
-                            pixels = values,
-                            version = version.incrementAndGet(),
-                        ),
-                    )
-                } catch (error: Throwable) {
-                    Log.w(TAG, "Unable to cache segmentation mask", error)
                 }
+                .addOnFailureListener { error ->
+                    Log.w(TAG, "Segmentation failed", error)
+                }
+                .addOnCompleteListener {
+                    totalDurationMs.addAndGet(
+                        (System.nanoTime() - startedAtNs) / 1_000_000L,
+                    )
+                    completedCount.incrementAndGet()
+                    bitmap.recycle()
+                    running.set(false)
+                }
+        } catch (error: Throwable) {
+            bitmap.recycle()
+            running.set(false)
+            Log.w(TAG, "Unable to start segmentation", error)
+        }
+    }
+
+    private fun rgbaToBitmap(sample: SegmentationRgbaSample): Bitmap {
+        val width = sample.width
+        val height = sample.height
+        val rgba: ByteBuffer = sample.rgba
+        val pixels = IntArray(width * height)
+        for (y in 0 until height) {
+            val sourceY = height - 1 - y
+            for (x in 0 until width) {
+                val offset = (sourceY * width + x) * RGBA_BYTES_PER_PIXEL
+                val r = rgba.get(offset).toInt() and 0xff
+                val g = rgba.get(offset + 1).toInt() and 0xff
+                val b = rgba.get(offset + 2).toInt() and 0xff
+                val a = rgba.get(offset + 3).toInt() and 0xff
+                pixels[y * width + x] =
+                    (a shl 24) or (r shl 16) or (g shl 8) or b
             }
-            .addOnFailureListener { error ->
-                Log.w(TAG, "Segmentation failed", error)
-            }
-            .addOnCompleteListener {
-                totalDurationMs.addAndGet((System.nanoTime() - startedAtNs) / 1_000_000L)
-                completedCount.incrementAndGet()
-                running.set(false)
-            }
+        }
+        return Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888)
+    }
+
+    private fun recordPreprocessing(totalUs: Long) {
+        val durationMs = (totalUs / 1_000L).coerceAtLeast(0L)
+        preprocessingCount.incrementAndGet()
+        totalPreprocessingMs.addAndGet(durationMs)
+        updateMax(maxPreprocessingMs, durationMs)
+    }
+
+    fun cancelSample() {
+        running.set(false)
     }
 
     fun consumeStats(): SegmentationStats {
         val count = completedCount.getAndSet(0)
         val duration = totalDurationMs.getAndSet(0)
+        val preprocessCount = preprocessingCount.getAndSet(0)
+        val preprocessDuration = totalPreprocessingMs.getAndSet(0)
+        val preprocessMax = maxPreprocessingMs.getAndSet(0)
         return SegmentationStats(
             completedCount = count,
             averageDurationMs = if (count > 0) duration.toFloat() / count.toFloat() else 0f,
+            averagePreprocessingMs = if (preprocessCount > 0) {
+                preprocessDuration.toFloat() / preprocessCount.toFloat()
+            } else {
+                0f
+            },
+            maxPreprocessingMs = preprocessMax,
         )
     }
 
-    private fun createSegmentationBitmap(frame: VideoFrame): Bitmap {
-        val buffer = frame.buffer
-        val sourceWidth = buffer.width
-        val sourceHeight = buffer.height
-        val maxSide = max(sourceWidth, sourceHeight)
-        val scale = SEGMENTATION_MAX_SIDE.toFloat() / maxSide.toFloat()
-        val targetWidth = max(2, (sourceWidth * scale).toInt())
-        val targetHeight = max(2, (sourceHeight * scale).toInt())
-        val scaled = buffer.cropAndScale(
-            0,
-            0,
-            sourceWidth,
-            sourceHeight,
-            targetWidth,
-            targetHeight,
-        )
-        val i420 = scaled.toI420()
-        scaled.release()
-        if (i420 == null) {
-            throw IllegalStateException("Unable to convert segmentation frame to I420")
+    private fun updateMax(target: AtomicLong, value: Long) {
+        while (true) {
+            val current = target.get()
+            if (value <= current || target.compareAndSet(current, value)) return
         }
-
-        try {
-            val bitmap = smallI420ToBitmap(i420)
-            return rotateBitmap(bitmap, frame.rotation)
-        } finally {
-            i420.release()
-        }
-    }
-
-    private fun rotateBitmap(source: Bitmap, rotation: Int): Bitmap {
-        if (rotation == 0) return source
-        val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
-        return Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true)
-    }
-
-    private fun smallI420ToBitmap(buffer: VideoFrame.I420Buffer): Bitmap {
-        val width = buffer.width
-        val height = buffer.height
-        val pixels = IntArray(width * height)
-
-        for (y in 0 until height) {
-            for (x in 0 until width) {
-                val yy = buffer.dataY.get(y * buffer.strideY + x).toInt() and 0xff
-                val uvX = x / 2
-                val uvY = y / 2
-                val u = (buffer.dataU.get(uvY * buffer.strideU + uvX).toInt() and 0xff) - 128
-                val v = (buffer.dataV.get(uvY * buffer.strideV + uvX).toInt() and 0xff) - 128
-                val r = (yy + 1.402f * v).toInt().coerceIn(0, 255)
-                val g = (yy - 0.344136f * u - 0.714136f * v).toInt().coerceIn(0, 255)
-                val b = (yy + 1.772f * u).toInt().coerceIn(0, 255)
-                pixels[y * width + x] = Color.rgb(r, g, b)
-            }
-        }
-
-        return Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888)
     }
 
     companion object {
         private const val TAG = "SystemCall.Segmentation"
-        private const val SEGMENTATION_MAX_SIDE = 256
-        private const val SEGMENTATION_INTERVAL_MS = 125L
+        private const val SEGMENTATION_INTERVAL_MS = 160L
+        private const val RGBA_BYTES_PER_PIXEL = 4
     }
 }
 
 data class SegmentationStats(
     val completedCount: Long,
     val averageDurationMs: Float,
+    val averagePreprocessingMs: Float,
+    val maxPreprocessingMs: Long,
 )

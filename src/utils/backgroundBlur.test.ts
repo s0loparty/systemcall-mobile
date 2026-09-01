@@ -15,7 +15,7 @@ describe('setBackgroundBlur', () => {
     expect(setEffects).toHaveBeenCalledWith([BACKGROUND_BLUR_EFFECT]);
   });
 
-  it('clears the Android processor with null', () => {
+  it('clears Android video effects when blur is disabled', () => {
     const setEffects = jest.fn();
 
     setBackgroundBlur(makeTrack(setEffects), false, 'android');
