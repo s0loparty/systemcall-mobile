@@ -32,14 +32,10 @@ export function LocalPreview({track, enabled, compact = false}: Props) {
     // second MediaStream wrapper around mediaStreamTrack. Also refresh the
     // stream when LiveKit restarts the native camera track.
     const onRestarted = (restartedTrack: Track | null) => {
-<<<<<<< HEAD
       setStream(
         (restartedTrack?.mediaStream as ReactNativeMediaStream | undefined) ??
           null,
       );
-=======
-      setStream(restartedTrack?.mediaStream ?? null);
->>>>>>> be12c491694b4f713ff65f442f6ac6303fa5d5b7
     };
 
     track.on(TrackEvent.Restarted, onRestarted);
