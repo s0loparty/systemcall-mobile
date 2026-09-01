@@ -231,7 +231,7 @@ describe('useCallLifecycle', () => {
     expect(room.localParticipant.setCameraEnabled).toHaveBeenCalledWith(false);
     expect(room.localParticipant.setCameraEnabled).toHaveBeenCalledWith(true, {
       facingMode: 'user',
-      resolution: {width: 854, height: 480, frameRate: 15},
+      resolution: {width: 854, height: 480, frameRate: 30},
     });
     expect(deps.applyBackgroundBlur).toHaveBeenCalledWith(
       expect.objectContaining({restartTrack: expect.any(Function)}),
@@ -345,7 +345,7 @@ describe('useCallLifecycle', () => {
 
     expect(cameraTrack?.restartTrack).toHaveBeenCalledWith({
       facingMode: 'environment',
-      resolution: {width: 854, height: 480, frameRate: 15},
+      resolution: {width: 854, height: 480, frameRate: 30},
     });
     expect(deps.applyBackgroundBlur).toHaveBeenCalledWith(cameraTrack, true);
   });

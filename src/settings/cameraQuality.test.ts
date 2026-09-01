@@ -15,21 +15,21 @@ describe('camera quality presets', () => {
     ]);
   });
 
-  it('uses medium 480p 15 FPS as the default', () => {
-    expect(DEFAULT_CAMERA_QUALITY_PRESET_ID).toBe('medium');
+  it('uses high 720p 30 FPS as the default', () => {
+    expect(DEFAULT_CAMERA_QUALITY_PRESET_ID).toBe('high');
     expect(
       getCameraQualityPreset(DEFAULT_CAMERA_QUALITY_PRESET_ID),
     ).toMatchObject({
-      width: 854,
-      height: 480,
-      frameRate: 15,
+      width: 1280,
+      height: 720,
+      frameRate: 30,
     });
   });
 
   it('creates LiveKit capture options from the selected preset', () => {
     expect(getCameraCaptureOptions('medium', 'environment')).toEqual({
       facingMode: 'environment',
-      resolution: {width: 854, height: 480, frameRate: 15},
+      resolution: {width: 854, height: 480, frameRate: 30},
     });
   });
 });
