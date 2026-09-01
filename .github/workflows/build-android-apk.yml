@@ -4,13 +4,15 @@ on:
   push:
     branches:
       - build-app
+    tags:
+      - '*'
   pull_request:
     branches:
       - build-app
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: android-apk-${{ github.ref }}
@@ -87,7 +89,25 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: systemcall-mobile-arm64-release-${{ github.sha }}
+          name: systemcall-mobile-arm64-release-${{ github.ref_name }}
           path: android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish APK to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          apk_name="system-call-${RELEASE_TAG}-arm64-release.apk"
+          cp android/app/build/outputs/apk/release/app-release.apk "$apk_name"
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$apk_name" --clobber
+          else
+            gh release create "$RELEASE_TAG" "$apk_name" \
+              --title "System Call ${RELEASE_TAG}" \
+              --notes "Android release APK for ${RELEASE_TAG}." \
+              --verify-tag
+          fi
