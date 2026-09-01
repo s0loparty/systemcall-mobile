@@ -18,6 +18,9 @@ concurrency:
   group: android-apk-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  SYSTEMCALL_API_BASE_URL: ${{ vars.SYSTEMCALL_API_BASE_URL || secrets.SYSTEMCALL_API_BASE_URL }}
+
 jobs:
   build-release-apk:
     name: Build release APK (ARM64)

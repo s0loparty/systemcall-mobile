@@ -55,6 +55,18 @@ npm ci
 npm install
 ```
 
+Создать локальный `.env`:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+И указать API backend:
+
+```env
+SYSTEMCALL_API_BASE_URL=https://systemcall.example
+```
+
 ## Запуск приложения локально
 
 1. Подключить Android-устройство или запустить эмулятор.
