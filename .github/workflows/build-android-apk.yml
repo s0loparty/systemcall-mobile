@@ -51,6 +51,13 @@ jobs:
       - name: Install JavaScript dependencies
         run: npm ci
 
+      - name: Verify release environment
+        run: |
+          if [ -z "$SYSTEMCALL_API_BASE_URL" ]; then
+            echo "SYSTEMCALL_API_BASE_URL must be configured in GitHub repository variables or secrets."
+            exit 1
+          fi
+
       - name: Download Gradle wrapper JAR
         run: |
           mkdir -p android/gradle/wrapper
