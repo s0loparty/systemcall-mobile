@@ -1,7 +1,9 @@
 import type {LiveKitCredentials} from '../types/api';
+import type {CameraQualityPresetId} from '../settings/cameraQuality';
 
 export type RootStackParamList = {
   Home: undefined;
+  Settings: undefined;
   PreJoin: {
     publicId: string;
     roomName: string;
@@ -15,6 +17,8 @@ export type RootStackParamList = {
     cameraEnabled: boolean;
     microphoneEnabled: boolean;
     cameraFacingMode: 'user' | 'environment';
+    cameraQualityPresetId: CameraQualityPresetId;
+    backgroundBlurEnabled: boolean;
   };
   Call: {
     roomName: string;
@@ -22,5 +26,7 @@ export type RootStackParamList = {
     cameraEnabled: boolean;
     microphoneEnabled: boolean;
     cameraFacingMode: 'user' | 'environment';
+    cameraQualityPresetId: CameraQualityPresetId;
+    backgroundBlurEnabled: boolean;
   };
 };

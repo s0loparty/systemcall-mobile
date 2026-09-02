@@ -12,6 +12,10 @@ export async function apiRequest<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
+  if (!config.apiBaseUrl) {
+    throw new ApiError('SYSTEMCALL_API_BASE_URL is not configured');
+  }
+
   const response = await fetch(`${config.apiBaseUrl}${path}`, {
     ...init,
     headers: {
