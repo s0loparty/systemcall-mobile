@@ -99,7 +99,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: systemcall-mobile-arm64-release-${{ github.ref_name }}
+          name: systemcall-mobile-arm64-release-${{ github.run_number }}
           path: android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
