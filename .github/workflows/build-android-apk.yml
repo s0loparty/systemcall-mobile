@@ -1,35 +1,55 @@
 name: Build Android APK
 
 on:
-  push:
-    branches:
-      - build-app
-    tags:
-      - '*'
   pull_request:
     branches:
       - build-app
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: android-apk-${{ github.ref }}
+  group: android-apk-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 env:
-  SYSTEMCALL_API_BASE_URL: ${{ vars.SYSTEMCALL_API_BASE_URL || secrets.SYSTEMCALL_API_BASE_URL }}
+  SYSTEMCALL_API_BASE_URL: ${{ vars.SYSTEMCALL_API_BASE_URL }}
 
 jobs:
   build-release-apk:
     name: Build release APK (ARM64)
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Validate release environment
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "${SYSTEMCALL_API_BASE_URL:-}" ]; then
+            echo "::error::SYSTEMCALL_API_BASE_URL is not configured as a GitHub repository variable."
+            exit 1
+          fi
+
+          case "$SYSTEMCALL_API_BASE_URL" in
+            https://*) ;;
+            *)
+              echo "::error::SYSTEMCALL_API_BASE_URL must start with https://"
+              exit 1
+              ;;
+          esac
+
+          echo "Release API base URL is configured."
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -51,12 +71,10 @@ jobs:
       - name: Install JavaScript dependencies
         run: npm ci
 
-      - name: Verify release environment
+      - name: Write release environment
+        shell: bash
         run: |
-          if [ -z "$SYSTEMCALL_API_BASE_URL" ]; then
-            echo "SYSTEMCALL_API_BASE_URL must be configured in GitHub repository variables or secrets."
-            exit 1
-          fi
+          printf 'SYSTEMCALL_API_BASE_URL=%s\n' "$SYSTEMCALL_API_BASE_URL" > .env
 
       - name: Download Gradle wrapper JAR
         run: |
@@ -92,9 +110,28 @@ jobs:
           org.gradle.wrapper.GradleWrapperMain
           assembleRelease
           -PreactNativeArchitectures=arm64-v8a
-          --build-cache
+          --no-build-cache
           --parallel
           --no-daemon
+
+      - name: Verify API URL was bundled
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          bundle="android/app/build/generated/assets/createBundleReleaseJsAndAssets/index.android.bundle"
+
+          if [ ! -f "$bundle" ]; then
+            echo "::error::Release JavaScript bundle was not found at $bundle"
+            exit 1
+          fi
+
+          if ! grep -Fq "$SYSTEMCALL_API_BASE_URL" "$bundle"; then
+            echo "::error::SYSTEMCALL_API_BASE_URL was not embedded into the release JavaScript bundle."
+            exit 1
+          fi
+
+          echo "Verified SYSTEMCALL_API_BASE_URL in release bundle."
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
